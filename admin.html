@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gruz Admin</title>
+<style>
+  :root {
+    --void: #050308; --slab: #0c0912; --rubble: #161020; --seam: #2b2139;
+    --neon: #b45cff; --hot: #dcaaff; --text: #f1ecf8; --mute: #9488a8; --ok: #7dffb2; --bad: #ff5c8a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 80% -10%, rgba(180, 92, 255, .14), transparent 60%), var(--void);
+    color: var(--text); font: 14px/1.5 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 60px; }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+  .logo { font: 800 22px/1 'Segoe UI', sans-serif; letter-spacing: .14em; color: var(--hot); text-shadow: 0 0 18px rgba(180, 92, 255, .6); }
+  .logo small { font-size: 11px; letter-spacing: .3em; color: var(--mute); margin-left: 8px; }
+  header .sp { flex: 1; }
+  nav { display: flex; gap: 4px; flex-wrap: wrap; }
+  nav button { background: transparent; border: 1px solid transparent; padding: 7px 14px; cursor: pointer; color: var(--mute); }
+  nav button.on { color: var(--text); border-color: var(--seam); background: var(--slab); box-shadow: inset 0 -2px 0 var(--neon); }
+  .card { background: var(--slab); border: 1px solid var(--seam); padding: 18px; margin-bottom: 16px; }
+  h2 { margin: 0 0 12px; font-size: 13px; letter-spacing: .12em; text-transform: uppercase; color: var(--mute); font-weight: 600; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .stat { background: var(--rubble); padding: 14px; }
+  .stat b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; color: var(--hot); }
+  .stat span { color: var(--mute); font-size: 12px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; color: var(--mute); font-weight: 500; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid var(--seam); }
+  td { padding: 8px; border-bottom: 1px solid rgba(43, 33, 57, .6); vertical-align: middle; }
+  td img { width: 22px; height: 22px; vertical-align: middle; margin-right: 8px; image-rendering: pixelated; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input, select, textarea { background: var(--rubble); border: 1px solid var(--seam); padding: 8px 10px; min-width: 0; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--neon); }
+  textarea { width: 100%; min-height: 90px; resize: vertical; }
+  .btn { background: var(--neon); color: #12051f; border: 0; padding: 8px 16px; font-weight: 700; cursor: pointer; }
+  .btn:hover { background: var(--hot); }
+  .ghost { background: transparent; border: 1px solid var(--seam); padding: 6px 12px; cursor: pointer; }
+  .ghost:hover { border-color: var(--neon); }
+  .danger { color: var(--bad); }
+  .pill { display: inline-block; font-size: 11px; padding: 1px 7px; border: 1px solid var(--seam); margin: 1px 2px; color: var(--mute); }
+  .pill.on { color: var(--ok); border-color: rgba(125, 255, 178, .4); }
+  .pill.ban { color: var(--bad); border-color: rgba(255, 92, 138, .4); }
+  .muted { color: var(--mute); }
+  .code { font-family: Consolas, monospace; letter-spacing: .06em; color: var(--hot); }
+  #login { max-width: 360px; margin: 14vh auto 0; }
+  #login .card { padding: 26px; }
+  #login input { width: 100%; margin: 10px 0 14px; }
+  .err { color: var(--bad); min-height: 20px; margin: 0; }
+  .news-item { border-left: 2px solid var(--neon); padding: 6px 12px; margin-bottom: 10px; background: var(--rubble); }
+  .news-item h3 { margin: 0; font-size: 15px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .two label, .one label { display: block; font-size: 12px; color: var(--mute); }
+  .two input, .one input { width: 100%; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div id="disabled" class="wrap" hidden>
+  <div class="card"><h2>Panel wyłączony</h2><p>Uruchom serwer ze zmienną <span class="code">GRUZ_ADMIN_PASSWORD</span>, np. <span class="code">GRUZ_ADMIN_PASSWORD=tajne npm start</span>.</p></div>
+</div>
+
+<div id="login" hidden>
+  <div class="card">
+    <div class="logo">GRUZ<small>ADMIN</small></div>
+    <form id="login-form">
+      <input type="password" id="pw" placeholder="Hasło admina" autocomplete="current-password" autofocus />
+      <p class="err" id="login-err"></p>
+      <button class="btn" type="submit">Zaloguj</button>
+    </form>
+  </div>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <header>
+    <div class="logo">GRUZ<small>ADMIN</small></div>
+    <div class="sp"></div>
+    <nav id="nav">
+      <button data-tab="overview" class="on">Przegląd</button>
+      <button data-tab="users">Gracze</button>
+      <button data-tab="codes">Kody</button>
+      <button data-tab="news">Newsy</button>
+    </nav>
+    <button class="ghost" id="logout">Wyloguj</button>
+  </header>
+
+  <section data-panel="overview">
+    <div class="card"><h2>Serwer</h2><div class="grid" id="stats"></div></div>
+    <div class="card"><h2>Najwięcej godzin</h2><table><thead><tr><th>Gracz</th><th>Poziom</th><th>Godziny</th></tr></thead><tbody id="top"></tbody></table></div>
+  </section>
+
+  <section data-panel="users" hidden>
+    <div class="card">
+      <div class="row" style="margin-bottom:12px"><input id="q" placeholder="Szukaj po nicku albo UUID" style="flex:1" /><button class="btn" id="search">Szukaj</button></div>
+      <table><thead><tr><th>Gracz</th><th>Poz.</th><th>Godz.</th><th>Kille</th><th>Odznaki / odblokowane</th><th>Ostatnio</th><th></th></tr></thead><tbody id="users"></tbody></table>
+    </div>
+  </section>
+
+  <section data-panel="codes" hidden>
+    <div class="card">
+      <h2>Nowe kody</h2>
+      <div class="row">
+        <select id="c-cos"></select>
+        <input id="c-count" type="number" min="1" max="100" value="1" style="width:80px" title="Ile kodów" />
+        <input id="c-uses" type="number" min="0" value="1" style="width:90px" title="Użycia na kod (0 = bez limitu)" />
+        <input id="c-code" placeholder="Własny kod (opcjonalnie)" />
+        <input id="c-note" placeholder="Notatka, np. giveaway" />
+        <button class="btn" id="c-make">Utwórz</button>
+      </div>
+      <p class="muted" id="c-made"></p>
+    </div>
+    <div class="card"><h2>Kody</h2><table><thead><tr><th>Kod</th><th>Kosmetyka</th><th>Użycia</th><th>Notatka</th><th></th></tr></thead><tbody id="codes"></tbody></table></div>
+  </section>
+
+  <section data-panel="news" hidden>
+    <div class="card">
+      <h2>Nowy news</h2>
+      <p class="muted">Launchery z wpisanym adresem tego serwera same pokażą newsy z <span class="code">/news.json</span>.</p>
+      <div class="two">
+        <label>Tytuł (PL)<input id="n-tpl" /></label><label>Title (EN)<input id="n-ten" /></label>
+        <label>Etykieta (PL)<input id="n-gpl" placeholder="Aktualizacja" /></label><label>Tag (EN)<input id="n-gen" placeholder="Update" /></label>
+      </div>
+      <div class="two" style="margin-top:10px">
+        <label>Treść (PL)<textarea id="n-bpl"></textarea></label><label>Body (EN)<textarea id="n-ben"></textarea></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="n-add">Opublikuj</button><span class="err" id="n-err"></span></div>
+    </div>
+    <div class="card"><h2>Opublikowane</h2><div id="news"></div></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const ENABLED = __ENABLED__;
+  const $ = (s) => document.querySelector(s);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const ago = (t) => {
+    const m = Math.round((Date.now() - t) / 60000);
+    if (m < 1) return 'teraz';
+    if (m < 60) return m + ' min temu';
+    const h = Math.round(m / 60);
+    if (h < 48) return h + ' h temu';
+    return Math.round(h / 24) + ' dni temu';
+  };
+  let token = sessionStorage.getItem('gruzAdmin') || '';
+
+  async function api(path, opts = {}) {
+    const res = await fetch('/admin/api/' + path, {
+      method: opts.method || 'GET',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + token },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401 && path !== 'login') { logout(); throw new Error(data.error || 'Zaloguj się'); }
+    if (!res.ok) throw new Error(data.error || 'Błąd ' + res.status);
+    return data;
+  }
+
+  function show(id) { ['disabled', 'login', 'app'].forEach((x) => { $('#' + x).hidden = x !== id; }); }
+  function logout() { token = ''; sessionStorage.removeItem('gruzAdmin'); show('login'); }
+
+  $('#login-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('#login-err').textContent = '';
+    try {
+      const r = await api('login', { method: 'POST', body: { password: $('#pw').value } });
+      token = r.token;
+      sessionStorage.setItem('gruzAdmin', token);
+      start();
+    } catch (err) { $('#login-err').textContent = err.message; }
+  });
+  $('#logout').addEventListener('click', logout);
+
+  $('#nav').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
+    document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews })[b.dataset.tab]();
+  });
+
+  async function loadStats() {
+    const s = await api('stats');
+    const items = [['Graczy', s.users], ['Online teraz', s.online], ['Aktywni (24 h)', s.active24h], ['Nowi (24 h)', s.new24h],
+      ['Party', s.parties], ['Rozmów', s.conversations], ['Wiadomości', s.messages], ['Godzin gry', s.hours],
+      ['Zbanowani', s.banned], ['Kody', s.codes], ['Wersja', s.version]];
+    $('#stats').innerHTML = items.map(([k, v]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+    $('#top').innerHTML = s.top.map((u) => `<tr><td><img src="https://mc-heads.net/avatar/${esc(u.uuid)}/22" alt="">${esc(u.name)}</td><td>${u.level}</td><td>${u.hours}</td></tr>`).join('')
+      || '<tr><td colspan="3" class="muted">Jeszcze nikt nie grał.</td></tr>';
+  }
+
+  async function loadUsers() {
+    const list = await api('users?q=' + encodeURIComponent($('#q').value.trim()));
+    $('#users').innerHTML = list.map((u) => `
+      <tr data-uuid="${esc(u.uuid)}">
+        <td><img src="https://mc-heads.net/avatar/${esc(u.uuid)}/22" alt="">${esc(u.name)}
+          ${u.online ? '<span class="pill on">online</span>' : ''}${u.banned ? '<span class="pill ban">ban</span>' : ''}${u.staff ? '<span class="pill">ekipa</span>' : ''}</td>
+        <td>${u.level}</td><td>${u.hours}</td><td>${u.kills}</td>
+        <td>${u.badges.map((b) => `<span class="pill">${esc(b)}</span>`).join('')}${u.unlocked.map((b) => `<span class="pill on">${esc(b)}</span>`).join('')}</td>
+        <td class="muted">${ago(u.lastSeen)}</td>
+        <td class="row">
+          <button class="ghost ${u.banned ? '' : 'danger'}" data-act="ban" data-v="${!u.banned}">${u.banned ? 'Odbanuj' : 'Banuj'}</button>
+          <button class="ghost" data-act="staff" data-v="${!u.staff}">${u.staff ? 'Zabierz ekipę' : 'Ekipa'}</button>
+        </td>
+      </tr>`).join('') || '<tr><td colspan="7" class="muted">Brak wyników.</td></tr>';
+  }
+  $('#search').addEventListener('click', loadUsers);
+  $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') loadUsers(); });
+  $('#users').addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const uuid = b.closest('tr').dataset.uuid;
+    if (b.dataset.act === 'ban' && b.dataset.v === 'true' && !confirm('Zbanować tego gracza? Zostanie rozłączony.')) return;
+    await api('user', { method: 'POST', body: { uuid, [b.dataset.act === 'ban' ? 'banned' : 'staff']: b.dataset.v === 'true' } });
+    loadUsers();
+  });
+
+  async function loadCodes() {
+    const r = await api('codes');
+    $('#c-cos').innerHTML = r.locked.map((c) => `<option>${esc(c)}</option>`).join('');
+    $('#codes').innerHTML = r.codes.map((c) => `<tr><td class="code">${esc(c.code)}</td><td>${esc(c.cosmetic)}</td>
+      <td>${c.used} / ${c.maxUses || '∞'}</td><td class="muted">${esc(c.note)}</td>
+      <td><button class="ghost danger" data-del="${esc(c.code)}">Usuń</button></td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">Brak kodów.</td></tr>';
+  }
+  $('#c-make').addEventListener('click', async () => {
+    const r = await api('codes', { method: 'POST', body: {
+      cosmetic: $('#c-cos').value, count: $('#c-count').value, maxUses: $('#c-uses').value, code: $('#c-code').value, note: $('#c-note').value,
+    } });
+    $('#c-made').innerHTML = 'Utworzono: ' + r.made.map((c) => `<span class="code">${esc(c)}</span>`).join(', ');
+    $('#c-code').value = '';
+    loadCodes();
+  });
+  $('#codes').addEventListener('click', async (e) => {
+    const code = e.target.dataset.del;
+    if (!code || !confirm('Usunąć kod ' + code + '?')) return;
+    await api('codes/' + encodeURIComponent(code), { method: 'DELETE' });
+    loadCodes();
+  });
+
+  async function loadNews() {
+    const list = await api('news');
+    $('#news').innerHTML = list.map((n) => `<div class="news-item"><div class="row"><h3>${esc(n.title.pl)}</h3>
+      <span class="pill">${esc(n.tag.pl)}</span><span class="muted">${esc(n.date)}</span><span style="flex:1"></span>
+      <button class="ghost danger" data-del="${esc(n.id)}">Usuń</button></div><p>${esc(n.body.pl)}</p></div>`).join('')
+      || '<p class="muted">Brak newsów. Launchery pokażą wtedy swoje wbudowane.</p>';
+  }
+  $('#n-add').addEventListener('click', async () => {
+    $('#n-err').textContent = '';
+    try {
+      await api('news', { method: 'POST', body: {
+        titlePl: $('#n-tpl').value, titleEn: $('#n-ten').value, tagPl: $('#n-gpl').value, tagEn: $('#n-gen').value,
+        bodyPl: $('#n-bpl').value, bodyEn: $('#n-ben').value,
+      } });
+      ['#n-tpl', '#n-ten', '#n-gpl', '#n-gen', '#n-bpl', '#n-ben'].forEach((s) => { $(s).value = ''; });
+      loadNews();
+    } catch (err) { $('#n-err').textContent = err.message; }
+  });
+  $('#news').addEventListener('click', async (e) => {
+    const id = e.target.dataset.del;
+    if (!id || !confirm('Usunąć ten news?')) return;
+    await api('news/' + encodeURIComponent(id), { method: 'DELETE' });
+    loadNews();
+  });
+
+  function start() { show('app'); loadStats().catch(() => {}); }
+  if (!ENABLED) show('disabled');
+  else if (token) start();
+  else show('login');
+})();
+</script>
+</body>
+</html>
