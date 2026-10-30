@@ -57,17 +57,28 @@ Bez `DATABASE_URL` serwer trzyma dane w plikach (`data/`), co wystarcza na włas
 
 ## Bot Discord (opcjonalny)
 
-Bot działa razem z serwerem Gruz i daje komendy:
-- `/gruz gracz nick`: profil gracza (poziom, godziny, kille, odznaki, czy gra teraz i gdzie),
-- `/gruz online`: kto teraz gra na Gruz Client,
-- `/gruz top`: ranking godzin,
+Bot działa razem z serwerem Gruz. Domyślnie mówi po angielsku (`/gruzadmin config language pl` przełącza na polski).
 
-oraz wiadomość na wybranym kanale z listą graczy online, odświeżaną co minutę.
+**Dla wszystkich (`/gruz`)**
+- `player nick`: profil gracza (poziom, godziny, kille, odznaki, gdzie teraz gra),
+- `online`: kto teraz gra, `top`: ranking godzin,
+- `skin nick`: obrazek ze skinem z przodu i z tyłu, z peleryną Gruz,
+- `server adres`: status serwera Minecraft (gracze, wersja, ping, MOTD, ikona, ilu graczy Gruz tam jest),
+- `servers`: najczęściej grane serwery przez graczy Gruz.
+
+**Dla adminów (`/gruzadmin`)**
+- `giveaway start/end/reroll`: giveaway kosmetyki z przyciskiem „Join”; zwycięzca dostaje kod na priv (albo przyciskiem „Claim prize”),
+- `code`: tworzy kod na kosmetykę i wysyła go wybranej osobie na priv,
+- `tickets add-category / remove-category / staff-role / panel / list`: tickety z kategoriami; gracz wybiera kategorię, wpisuje nick MC i opis, bot tworzy prywatny kanał; po zamknięciu zapis rozmowy idzie na kanał logów i do gracza,
+- `verify panel`: weryfikacja z obrazkiem (captcha) i opcjonalnym minimalnym wiekiem konta Discord,
+- `config language / status-channel / updates-channel / logs-channel`: ustawienia; na kanale aktualizacji bot sam ogłasza nowe wydania z GitHuba (`ilikemoneyrux/gruz-client`, zmienna `GRUZ_RELEASES_REPO`),
+- `wipe`: usuwa wszystkie kanały poza kanałami bota.
 
 1. https://discord.com/developers/applications → **New Application** → zakładka **Bot** → **Reset Token** → skopiuj token.
-2. **OAuth2 → URL Generator**: zaznacz `bot` i `applications.commands`, w uprawnieniach `Send Messages`, `Embed Links`, `Read Message History`. Otwórz wygenerowany link i dodaj bota na swój serwer Discord.
-3. W Discordzie włącz **Tryb dewelopera** (Ustawienia → Zaawansowane), potem prawy klik na serwer → **Kopiuj ID serwera** i prawy klik na kanał → **Kopiuj ID kanału**.
-4. Na Renderze w **Environment** dodaj: `DISCORD_TOKEN`, `DISCORD_GUILD_ID` (ID serwera) i opcjonalnie `DISCORD_CHANNEL_ID` (kanał z listą graczy online).
+2. **OAuth2 → URL Generator**: zaznacz `bot` i `applications.commands`, w uprawnieniach **Administrator** (najprościej) albo: `Manage Channels`, `Manage Roles`, `Send Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `View Channels`. Otwórz link i dodaj bota na serwer.
+3. W Discordzie włącz **Tryb dewelopera** (Ustawienia → Zaawansowane), potem prawy klik na serwer → **Kopiuj ID serwera**.
+4. Na Renderze w **Environment** dodaj `DISCORD_TOKEN` i `DISCORD_GUILD_ID`. Kanały ustawisz potem komendami `/gruzadmin config …` (albo zmienną `DISCORD_CHANNEL_ID` dla listy graczy).
+5. Rola bota musi być **nad** rolą, którą daje weryfikacja (Ustawienia serwera → Role, przeciągnij).
 
 Uwaga: darmowy Render usypia serwer po 15 minutach bez ruchu, a wtedy bot też znika. Żeby działał cały czas, ustaw darmowy monitoring (np. uptimerobot.com), który co 5 minut otwiera `https://twoj-serwer.onrender.com/health`.
 

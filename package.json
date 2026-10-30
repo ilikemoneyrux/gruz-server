@@ -1,6 +1,6 @@
 {
   "name": "gruz-server",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Serwer Gruz Client: znajomi, wiadomości, party, kosmetyki",
   "main": "server.js",
   "scripts": {
@@ -9,6 +9,7 @@
   "author": "",
   "license": "UNLICENSED",
   "dependencies": {
+    "@napi-rs/canvas": "0.1.65",
     "discord.js": "^14.27.0",
     "pg": "^8.23.1",
     "ws": "^8.22.0"

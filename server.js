@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -21,8 +21,11 @@ const db = {
   dms: {},     // "uuidA|uuidB" (posortowane) -> [{ from, text|voice|sticker, at }]
   codes: {},   // KOD -> { cosmetic, maxUses, used: [uuid], created, note }
   news: [],    // [{ id, date, tag, title, body }] – publikowane w /news.json
+  servers: {}, // "hypixel.net" -> { ms, players: [uuid], sessions, last } – topka serwerów
+  discord: {}, // ustawienia bota Discord (język, kanały, tickety, giveawaye)
 };
-const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news']];
+const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
+  ['servers.json', 'servers'], ['discord.json', 'discord']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -211,6 +214,48 @@ function leaveParty(uuid) {
   pushParty(p);
 }
 
+// ---------------- topka serwerów ----------------
+// Liczymy, na jakich serwerach grają gracze Gruz (unikalni gracze i łączny czas).
+const SECOND_LEVEL = new Set(['co.uk', 'org.uk', 'com.pl', 'net.pl', 'org.pl', 'com.br', 'com.au', 'co.nz', 'com.tr', 'com.ua', 'co.za', 'com.mx']);
+function serverKey(address) {
+  let h = String(address || '').trim().toLowerCase().replace(/\.$/, '').replace(/:25565$/, '');
+  const port = /:(\d+)$/.exec(h);
+  if (port) h = h.slice(0, port.index);
+  if (/^[\d.]+$/.test(h) || h.includes(':') || !h.includes('.')) return port ? `${h}:${port[1]}` : h;
+  const parts = h.split('.');
+  const n = SECOND_LEVEL.has(parts.slice(-2).join('.')) ? 3 : 2;
+  return parts.slice(-n).join('.') + (port ? ':' + port[1] : '');
+}
+const serverSessions = new Map(); // uuid -> { key, since }
+function bankServer(s, ms) { s.ms = (s.ms || 0) + ms; s.last = now(); }
+function trackServer(uuid) {
+  const p = presenceOf(uuid);
+  const key = p.online && p.state === 'multiplayer' && p.server ? serverKey(p.server) : null;
+  const cur = serverSessions.get(uuid);
+  if (cur && cur.key === key) return;
+  if (cur) {
+    bankServer(db.servers[cur.key] ||= { ms: 0, players: [], sessions: 0 }, now() - cur.since);
+    serverSessions.delete(uuid);
+  }
+  if (key) {
+    const s = (db.servers[key] ||= { ms: 0, players: [], sessions: 0 });
+    if (!s.players.includes(uuid)) s.players.push(uuid);
+    s.sessions = (s.sessions || 0) + 1;
+    s.last = now();
+    serverSessions.set(uuid, { key, since: now() });
+  }
+  save();
+}
+// co 5 minut dopisujemy czas trwających sesji (żeby restart serwera go nie zgubił)
+setInterval(() => {
+  for (const v of serverSessions.values()) {
+    const s = db.servers[v.key];
+    if (s) bankServer(s, now() - v.since);
+    v.since = now();
+  }
+  if (serverSessions.size) save();
+}, 5 * 60_000);
+
 // ---------------- obsługa wiadomości ----------------
 const handlers = {
   presence(c, m) {
@@ -220,6 +265,7 @@ const handlers = {
     c.presence = { state, server, since: changed ? now() : c.presence.since };
     announce(c.uuid);
     syncRoom(c);
+    trackServer(c.uuid);
   },
 
   cosmetics(c, m) {
@@ -527,6 +573,7 @@ wss.on('connection', (ws, req) => {
     if (u) { u.lastSeen = now(); save(); }
     if (!isOnline(c.uuid)) leaveParty(c.uuid);
     announce(c.uuid);
+    trackServer(c.uuid);
   });
 });
 
@@ -546,12 +593,12 @@ setInterval(() => {
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
-    db, online, presenceOf, levelOf,
-    badgeName: (id) => BADGES.find((b) => b.id === id)?.pl,
+    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions,
+    badgeName: (id) => { const b = BADGES.find((x) => x.id === id); return b && (db.discord?.lang === 'pl' ? b.pl : b.en || b.pl); },
   });
 })().catch((e) => { console.error('Nie udało się uruchomić serwera:', e); process.exit(1); });
 
 // przy zamykaniu (np. restart na hostingu) zapisujemy od razu
 for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { clearTimeout(saveTimer); await flush(); process.exit(0); });
 
-module.exports = { server, db, handlers, levelOf, cleanCosmetics };
+module.exports = { server, db, handlers, levelOf, cleanCosmetics, serverKey };
