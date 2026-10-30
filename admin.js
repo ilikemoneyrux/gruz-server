@@ -127,6 +127,7 @@ async function route(req, res, url, ctx) {
       if (typeof body.lock === 'string') u.unlocked = u.unlocked.filter((x) => x !== body.lock);
       ctx.save();
       ctx.updateBadges(u.uuid);
+      if (ctx.pushMe) ctx.pushMe(u.uuid);
       return json(res, 200, { ok: true });
     }
 

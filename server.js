@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -102,20 +102,23 @@ function updateBadges(uuid) {
   }
 }
 function meView(u) {
-  return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [] };
+  return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason() };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
 // ---------------- kosmetyki na kody ----------------
-/** Te kosmetyki trzeba odblokować kodem. Bez kodu serwer nie pokaże ich innym graczom. */
-const LOCKED = ['cape:aurora', 'cape:ember'];
+const catalog = require('./catalog');
+/** Do panelu admina: wszystko, na co można zrobić kod ("all" = cały katalog) */
+const LOCKED = [...catalog.ALL.filter((k) => !catalog.FREE.includes(k)), 'all'];
+/** Zostawia tylko to, co gracz ma odblokowane. Kolor motywu przechodzi bez zmian. */
 function cleanCosmetics(u, set) {
-  return String(set || '').slice(0, 200).split(';').map((part) => {
+  return String(set || '').slice(0, 300).split(';').map((part) => {
     const [slot, value] = part.split('=');
     if (!slot) return null;
-    const key = `${slot}:${value}`;
-    if (LOCKED.includes(key) && !(u.unlocked || []).includes(key)) return `${slot}=none`;
-    return `${slot}=${value || 'none'}`;
+    if (slot === 'color') return /^[0-9a-f]{6}$/i.test(value || '') ? `color=${value}` : null;
+    if (!catalog.CATALOG[slot]) return null;
+    const v = value || 'none';
+    return `${slot}=${catalog.allowed(`${slot}:${v}`, u.unlocked || []) ? v : 'none'}`;
   }).filter(Boolean).join(';');
 }
 
@@ -264,6 +267,19 @@ const handlers = {
     u.unlocked.push(entry.cosmetic);
     save();
     c.send({ t: 'unlocked', cosmetic: entry.cosmetic, unlocked: u.unlocked });
+    updateBadges(c.uuid);
+    pushMe(c.uuid);
+  },
+
+  /** Kosmetyka sezonowa: za darmo, ale tylko w czasie wydarzenia */
+  'season.claim'(c, m) {
+    const key = String(m.key || '');
+    const season = catalog.activeSeason();
+    const u = user(c.uuid);
+    if (!season || !season.items.includes(key)) return c.send({ t: 'error', code: 'SEASON_OVER' });
+    if (!u.unlocked.includes(key)) u.unlocked.push(key);
+    save();
+    c.send({ t: 'unlocked', cosmetic: key, unlocked: u.unlocked, season: true });
     updateBadges(c.uuid);
     pushMe(c.uuid);
   },
@@ -451,7 +467,7 @@ const server = http.createServer((req, res) => {
 const adminCtx = {
   password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
-  updateBadges,
+  updateBadges, pushMe,
 };
 
 const wss = new WebSocketServer({ server, maxPayload: 600 * 1024 }); // wiadomości głosowe do ~20 s
@@ -528,6 +544,11 @@ setInterval(() => {
   const where = await storage.init();
   for (const [name, key] of FILES) db[key] = await storage.load(name, db[key]);
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
+  // bot Discord (gdy ustawiono DISCORD_TOKEN)
+  require('./discord')({
+    db, online, presenceOf, levelOf,
+    badgeName: (id) => BADGES.find((b) => b.id === id)?.pl,
+  });
 })().catch((e) => { console.error('Nie udało się uruchomić serwera:', e); process.exit(1); });
 
 // przy zamykaniu (np. restart na hostingu) zapisujemy od razu

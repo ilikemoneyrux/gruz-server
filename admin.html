@@ -205,6 +205,7 @@
         <td class="row">
           <button class="ghost ${u.banned ? '' : 'danger'}" data-act="ban" data-v="${!u.banned}">${u.banned ? 'Odbanuj' : 'Banuj'}</button>
           <button class="ghost" data-act="staff" data-v="${!u.staff}">${u.staff ? 'Zabierz ekipę' : 'Ekipa'}</button>
+          <button class="ghost" data-act="${u.unlocked.includes('all') ? 'lockall' : 'unlockall'}">${u.unlocked.includes('all') ? 'Zabierz wszystko' : 'Odblokuj wszystko'}</button>
         </td>
       </tr>`).join('') || '<tr><td colspan="7" class="muted">Brak wyników.</td></tr>';
   }
@@ -215,13 +216,15 @@
     if (!b) return;
     const uuid = b.closest('tr').dataset.uuid;
     if (b.dataset.act === 'ban' && b.dataset.v === 'true' && !confirm('Zbanować tego gracza? Zostanie rozłączony.')) return;
-    await api('user', { method: 'POST', body: { uuid, [b.dataset.act === 'ban' ? 'banned' : 'staff']: b.dataset.v === 'true' } });
+    if (b.dataset.act === 'unlockall') await api('user', { method: 'POST', body: { uuid, unlock: 'all' } });
+    else if (b.dataset.act === 'lockall') await api('user', { method: 'POST', body: { uuid, lock: 'all' } });
+    else await api('user', { method: 'POST', body: { uuid, [b.dataset.act === 'ban' ? 'banned' : 'staff']: b.dataset.v === 'true' } });
     loadUsers();
   });
 
   async function loadCodes() {
     const r = await api('codes');
-    $('#c-cos').innerHTML = r.locked.map((c) => `<option>${esc(c)}</option>`).join('');
+    $('#c-cos').innerHTML = r.locked.map((c) => `<option value="${esc(c)}">${c === 'all' ? 'all (wszystkie kosmetyki)' : esc(c)}</option>`).join('');
     $('#codes').innerHTML = r.codes.map((c) => `<tr><td class="code">${esc(c.code)}</td><td>${esc(c.cosmetic)}</td>
       <td>${c.used} / ${c.maxUses || '∞'}</td><td class="muted">${esc(c.note)}</td>
       <td><button class="ghost danger" data-del="${esc(c.code)}">Usuń</button></td></tr>`).join('')
