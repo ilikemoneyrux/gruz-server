@@ -10,7 +10,10 @@ Mały serwer Node.js, który łączy graczy Gruz Client:
 - **poziomy i odznaki** (XP za godziny gry, kille, znajomych i party) oraz **ranking znajomych**,
 - **wiadomości głosowe** (do 20 s) i **naklejki**,
 - **kody na ekskluzywne kosmetyki** (peleryny Zorza i Żar); bez kodu serwer nie pokazuje ich innym,
-- **panel admina** pod `/admin`: statystyki, gracze, bany, kody, newsy.
+- **codzienne zadania** (3 dziennie za XP) i **serie dni** z kosmetykami za progi,
+- **ranking tygodniowy** (XP z tygodnia, wyniki na Discordzie w poniedziałek, opcjonalna nagroda dla topki),
+- **linki do party** (`/party?c=KOD` → `gruzclient://party/KOD`): każdy z linkiem dołącza jednym kliknięciem,
+- **panel admina** pod `/admin`: statystyki, wykresy, gracze, bany, kody, newsy, zadania i ranking.
 
 Logowanie bez haseł: gracz potwierdza konto tym samym mechanizmem co przy wejściu na serwer Minecraft (Mojang `join` → `hasJoined`). Nikt nie podszyje się pod cudzy nick, a serwer nie dostaje tokenów konta.
 
@@ -41,6 +44,10 @@ Wejdź na `http://localhost:8787/admin` (albo `https://twoj-serwer/admin`). W pa
 - **Gracze**: wyszukiwanie, ban (gracz od razu jest rozłączany), oznaczenie jako „Ekipa” (odznaka).
 - **Kody**: tworzysz kody na peleryny Zorza / Żar (pojedyncze albo hurtem, z limitem użyć). Gracz wpisuje kod w launcherze w Szafie.
 - **Newsy**: to, co tu opublikujesz, launchery z Twoim serwerem pokażą na stronie Graj (`/news.json`).
+- **Wykresy**: nowi gracze dziennie z podziałem na źródło (sami / kod twórcy / zaproszenie znajomego), aktywni gracze i szczyt online,
+  top kody twórców i zapraszający, wersje launchera, ilu nowych wróciło po co najmniej dniu.
+- **Zadania i ranking**: XP za każde zadanie, nagrody za serię dni, nagroda tygodniowa dla topki, podgląd rankingu tygodnia.
+- **Bot Discord → Role za poziom**: rola od wybranego poziomu Gruz (tylko najwyższa albo wszystkie zdobyte).
 
 Bez `GRUZ_ADMIN_PASSWORD` panel jest wyłączony.
 
@@ -64,7 +71,9 @@ Bot działa razem z serwerem Gruz. Domyślnie mówi po angielsku (`/gruzadmin co
 - `online`: kto teraz gra, `top`: ranking godzin,
 - `skin nick`: obrazek ze skinem z przodu i z tyłu, z peleryną Gruz,
 - `server adres`: status serwera Minecraft (gracze, wersja, ping, MOTD, ikona, ilu graczy Gruz tam jest),
-- `servers`: najczęściej grane serwery przez graczy Gruz.
+- `servers`: najczęściej grane serwery przez graczy Gruz,
+- `top period:week`: ranking XP z tego tygodnia,
+- `invite [message]`: wysyła na kanał link do Twojego party (przycisk „Join party” otwiera launcher; działa 30 minut, do 7 osób; trzeba mieć połączone konto i być online w Gruz).
 
 **Dla adminów (`/gruzadmin`)**
 - `giveaway start/end/reroll`: giveaway kosmetyki z przyciskiem „Join”; zwycięzca dostaje kod na priv (albo przyciskiem „Claim prize”),
@@ -72,6 +81,9 @@ Bot działa razem z serwerem Gruz. Domyślnie mówi po angielsku (`/gruzadmin co
 - `tickets add-category / remove-category / staff-role / panel / list`: tickety z kategoriami; gracz wybiera kategorię, wpisuje nick MC i opis, bot tworzy prywatny kanał; po zamknięciu zapis rozmowy idzie na kanał logów i do gracza,
 - `verify panel`: weryfikacja z obrazkiem (captcha) i opcjonalnym minimalnym wiekiem konta Discord,
 - `config language / status-channel / updates-channel / logs-channel`: ustawienia; na kanale aktualizacji bot sam ogłasza nowe wydania z GitHuba (`ilikemoneyrux/gruz-client`, zmienna `GRUZ_RELEASES_REPO`),
+- `levels set / remove / list / sync`: role na Discordzie za poziom Gruz (dla graczy z `/gruz link`),
+- `config ranking-channel`: kanał, na który w każdy poniedziałek trafia ranking tygodnia; `ranking` wysyła obecny ranking od razu,
+- `config crashes-channel`: raporty crashy z launchera; gracz może też kliknąć **„Poproś o pomoc”** – bot otwiera mu prywatny ticket z logiem (wymaga połączonego konta),
 - `wipe`: usuwa wszystkie kanały poza kanałami bota.
 
 1. https://discord.com/developers/applications → **New Application** → zakładka **Bot** → **Reset Token** → skopiuj token.
@@ -98,3 +110,10 @@ Za reverse proxy (nginx, Caddy) przekieruj ruch WebSocket na port 8787.
 ## Skala
 
 Dane są w plikach JSON, co wystarczy na setki, a nawet kilka tysięcy graczy. Przy większym ruchu warto podmienić magazyn w `server.js` (obiekt `db`) na bazę, np. PostgreSQL albo Redis.
+
+## Zmienne środowiskowe (nowe w 1.6.0)
+
+- `GRUZ_PUBLIC_URL` – publiczny adres serwera do linków party (na Renderze nie trzeba, bierze `RENDER_EXTERNAL_URL`),
+- `GRUZ_TZ` – strefa czasowa zadań dziennych i rankingu (domyślnie `Europe/Warsaw`).
+
+Nowe pliki/klucze danych: `meta.json` (ranking tygodniowy) i `metrics.json` (aktywni dziennie) – w bazie tworzą się same.

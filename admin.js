@@ -245,6 +245,8 @@ async function route(req, res, url, ctx) {
       if (p === '/admin/api/bot/panel' && req.method === 'POST') return json(res, 200, await bot.postPanel(b));
       if (p === '/admin/api/bot/giveaway' && req.method === 'POST') return json(res, 200, await bot.giveaway(b));
       if (p === '/admin/api/bot/ticket-category' && req.method === 'POST') return json(res, 200, await bot.ticketCategory(b));
+      if (p === '/admin/api/bot/levels-sync' && req.method === 'POST') return json(res, 200, await bot.syncLevels());
+      if (p === '/admin/api/bot/ranking' && req.method === 'POST') return json(res, 200, await bot.postRanking());
       return json(res, 404, { error: 'Nie znaleziono.' });
     }
 
@@ -271,8 +273,87 @@ async function route(req, res, url, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    // ---------- wykresy: nowi gracze, skąd przyszli, aktywni ----------
+    if (p === '/admin/api/growth') {
+      const days = Math.max(7, Math.min(180, Number(url.searchParams.get('days')) || 30));
+      const keys = [];
+      for (let k = days - 1; k >= 0; k--) keys.push(ctx.dayKey(Date.now() - k * 864e5));
+      const uniq = [...new Set(keys)];
+      const rows = Object.fromEntries(uniq.map((k) => [k, { day: k, organic: 0, creator: 0, friend: 0, active: 0, peak: 0, sessions: 0 }]));
+      const from = uniq[0];
+      const creators = {}, inviters = {};
+      let organic = 0, creator = 0, friend = 0;
+      for (const u of users) {
+        const k = ctx.dayKey(u.firstSeen || 0);
+        if (k < from) continue;
+        const src = !u.referredBy ? 'organic' : u.referredBy.startsWith('P:') ? 'friend' : 'creator';
+        if (rows[k]) rows[k][src]++;
+        if (src === 'organic') organic++;
+        if (src === 'creator') { creator++; creators[u.referredBy] = (creators[u.referredBy] || 0) + 1; }
+        if (src === 'friend') {
+          friend++;
+          const inv = db.users[u.referredBy.slice(2)];
+          if (inv) inviters[inv.name] = (inviters[inv.name] || 0) + 1;
+        }
+      }
+      const m = db.metrics?.days || {};
+      const versions = {};
+      for (const k of uniq) {
+        if (m[k]) { rows[k].active = m[k].active || 0; rows[k].peak = m[k].peak || 0; rows[k].sessions = m[k].sessions || 0; }
+      }
+      // wersje launchera u graczy aktywnych w tym okresie
+      const since = Date.now() - days * 864e5;
+      for (const u of users) if (u.lastSeen > since && u.launcher) versions[u.launcher] = (versions[u.launcher] || 0) + 1;
+      const top = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, n]) => ({ name, n }));
+      return json(res, 200, {
+        days: uniq.map((k) => rows[k]), totals: { organic, creator, friend, all: organic + creator + friend },
+        creators: top(creators).map((x) => ({ ...x, name: (db.creators[x.name]?.name || x.name) + ' (' + x.name + ')' })),
+        inviters: top(inviters), versions: top(versions),
+        trackedSince: Object.keys(m).sort()[0] || null,
+        retention: (() => {
+          // ilu z nowych graczy wróciło po co najmniej 1 dniu
+          const fresh = users.filter((u) => u.firstSeen > since && Date.now() - u.firstSeen > 864e5);
+          const back = fresh.filter((u) => (u.lastSeen || 0) - (u.firstSeen || 0) > 864e5).length;
+          return { fresh: fresh.length, back };
+        })(),
+      });
+    }
+
+    // ---------- codzienne zadania i ranking tygodniowy ----------
+    if (p === '/admin/api/quests' && req.method === 'GET') {
+      const today = ctx.dayKey();
+      const daily = users.map((u) => u.daily).filter((d) => d && d.day === today);
+      const claimed = {};
+      for (const d of daily) for (const id of d.claimed || []) claimed[id] = (claimed[id] || 0) + 1;
+      return json(res, 200, {
+        quests: ctx.QUESTS.map((q) => ({ id: q.id, pl: q.pl, en: q.en, goal: q.goal, defaultXp: q.xp, xp: Number(db.promo.questXp?.[q.id]) || q.xp, claimedToday: claimed[q.id] || 0 })),
+        streak: ctx.streakTiers(), weeklyReward: db.promo.weeklyReward || { places: 0, cosmetic: '' },
+        cosmetics: ctx.LOCKED.filter((k) => k !== 'all'),
+        today: { players: daily.length, complete: daily.filter((d) => d.ids.every((x) => (d.claimed || []).includes(x))).length },
+        week: ctx.weekKey(), weekly: ctx.weeklyTop(15), lastWeekly: db.meta?.lastWeekly || null,
+        streaks: users.filter((u) => u.streak?.n).sort((a, b) => b.streak.n - a.streak.n).slice(0, 10).map((u) => ({ name: u.name, n: u.streak.n, last: u.streak.last, best: u.streakBest || 0 })),
+      });
+    }
+    if (p === '/admin/api/quests' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (Array.isArray(b.streak)) {
+        db.promo.questStreak = b.streak.map((x) => ({ days: Math.max(1, Math.min(365, Math.round(Number(x.days) || 0))), cosmetic: String(x.cosmetic || '') }))
+          .filter((x) => x.days && ctx.catalog.exists(x.cosmetic)).sort((a, c) => a.days - c.days).slice(0, 12);
+      }
+      if (b.xp && typeof b.xp === 'object') {
+        db.promo.questXp = {};
+        for (const q of ctx.QUESTS) { const v = Math.round(Number(b.xp[q.id]) || 0); if (v > 0 && v <= 1000 && v !== q.xp) db.promo.questXp[q.id] = v; }
+      }
+      if (b.weeklyReward) {
+        const c = String(b.weeklyReward.cosmetic || '');
+        db.promo.weeklyReward = { places: Math.max(0, Math.min(10, Math.round(Number(b.weeklyReward.places) || 0))), cosmetic: ctx.catalog.exists(c) ? c : '' };
+      }
+      ctx.save();
+      return json(res, 200, { ok: true });
+    }
+
     if (p === '/admin/api/crashes') {
-      return json(res, 200, (db.crashes || []).slice(0, 100).map(({ log, ...r }) => ({ ...r, logSize: (log || '').length })));
+      return json(res, 200, (db.crashes || []).slice(0, 100).map(({ log, ...r }) => ({ ...r, logSize: (log || '').length, ticket: r.ticket || null })));
     }
     if (p.startsWith('/admin/api/crashes/')) {
       const r = (db.crashes || []).find((x) => x.id === decodeURIComponent(p.slice('/admin/api/crashes/'.length)));

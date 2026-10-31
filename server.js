@@ -10,7 +10,9 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
+const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
+const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -26,9 +28,12 @@ const db = {
   crashes: [], // raporty crashy wysłane z launchera (najnowsze na początku)
   promo: { partners: [], ads: [], creatorReward: 'cape:nebula' }, // serwery partnerskie, reklamy, nagrody za kody i zaproszenia
   creators: {}, // KOD -> { code, name, discordId, cosmetic, uses: [uuid], created } – kody twórców
+  meta: {},     // { week, lastWeekly } – tygodniowy ranking
+  metrics: { days: {}, today: null }, // aktywni gracze dziennie, szczyt online, wersje launchera (wykresy w panelu)
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
-  ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes'], ['promo.json', 'promo'], ['creators.json', 'creators']];
+  ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes'], ['promo.json', 'promo'], ['creators.json', 'creators'],
+  ['meta.json', 'meta'], ['metrics.json', 'metrics']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -50,14 +55,31 @@ async function flush() {
 const dashed = (u) => String(u).replace(/-/g, '').replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, '$1-$2-$3-$4-$5').toLowerCase();
 const now = () => Date.now();
 
+// ---------------- daty (strefa serwera Gruz, domyślnie Polska) ----------------
+const dayFmt = new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+/** "2026-10-31" w strefie TZ */
+const dayKey = (ms = now()) => dayFmt.format(new Date(ms));
+const dayBefore = (key) => { const [y, m, d] = key.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d - 1)).toISOString().slice(0, 10); };
+/** Tydzień ISO, np. "2026-W44" (od poniedziałku) */
+function weekKey(ms = now()) {
+  const [y, m, d] = dayKey(ms).split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() + 3 - ((dt.getUTCDay() + 6) % 7));
+  const firstThu = new Date(Date.UTC(dt.getUTCFullYear(), 0, 4));
+  firstThu.setUTCDate(firstThu.getUTCDate() + 3 - ((firstThu.getUTCDay() + 6) % 7));
+  return `${dt.getUTCFullYear()}-W${String(1 + Math.round((dt - firstThu) / 6048e5)).padStart(2, '0')}`;
+}
+
 function user(uuid) { return db.users[uuid]; }
 function ensureUser(uuid, name) {
   if (!db.users[uuid]) {
     db.users[uuid] = { uuid, name, friends: [], incoming: [], outgoing: [], cosmetics: '', stats: {}, firstSeen: now(), lastSeen: now(),
-      joinIndex: Object.keys(db.users).length + 1, unlocked: [], badges: [], partiesLed: 0, partiesJoined: 0, dmsSent: 0 };
+      joinIndex: Object.keys(db.users).length + 1, unlocked: [], badges: [], partiesLed: 0, partiesJoined: 0, dmsSent: 0,
+      wk: { week: weekKey(), xp0: 0 } };
   }
   const u = db.users[uuid];
   for (const [k, v] of [['unlocked', []], ['badges', []], ['partiesLed', 0], ['partiesJoined', 0], ['dmsSent', 0]]) if (u[k] === undefined) u[k] = v;
+  if (!u.wk) u.wk = { week: weekKey(), xp0: xpOf(u) }; // starsi gracze: ranking tygodnia liczy się od teraz
   u.name = name;
   u.lastSeen = now();
   save();
@@ -72,8 +94,10 @@ function byName(name) {
 const hoursOf = (u) => (u.stats?.totalMs || 0) / 36e5;
 function xpOf(u) {
   return Math.round(hoursOf(u) * 60 + (u.stats?.kills || 0) * 4 + u.friends.length * 25
-    + (u.partiesLed || 0) * 15 + (u.partiesJoined || 0) * 10 + Math.min(500, (u.dmsSent || 0) * 0.5));
+    + (u.partiesLed || 0) * 15 + (u.partiesJoined || 0) * 10 + Math.min(500, (u.dmsSent || 0) * 0.5) + (u.bonusXp || 0));
 }
+/** XP zdobyte w tym tygodniu (ranking tygodniowy) */
+const weeklyXp = (u) => (u.wk && u.wk.week === weekKey() ? Math.max(0, xpOf(u) - (u.wk.xp0 || 0)) : 0);
 /** Poziom: każdy kolejny wymaga 15% więcej XP (100, 115, 132…) */
 function levelOf(u) {
   let level = 1, need = 100, rest = xpOf(u);
@@ -95,6 +119,7 @@ const BADGES = [
 function updateBadges(uuid) {
   const u = user(uuid);
   if (!u) return;
+  checkLevel(u);
   const have = BADGES.filter((b) => b.test(u)).map((b) => b.id);
   const fresh = have.filter((id) => !u.badges.includes(id));
   u.badges = have;
@@ -107,9 +132,21 @@ function updateBadges(uuid) {
     pushMe(uuid);
   }
 }
+/** Zmiana poziomu: powiadomienie gracza i role za poziom na Discordzie */
+const levelListeners = [];
+function checkLevel(u) {
+  const lv = levelOf(u).level;
+  if (u.lvl === lv) return;
+  const before = u.lvl;
+  u.lvl = lv;
+  save();
+  if (before && lv > before) sendTo(u.uuid, { t: 'notify', kind: 'levelUp', level: lv });
+  for (const f of levelListeners) { try { f(u, lv, before || 0); } catch (e) { console.error('[level]', e.message); } }
+}
 function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
-    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u) };
+    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u),
+    weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() } };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
@@ -300,6 +337,240 @@ function leaveParty(uuid) {
   pushParty(p);
 }
 
+// ---------------- kody do party (link z /gruz invite i z launchera) ----------------
+// Lider dostaje link https://…/party?c=KOD, który otwiera launcher (gruzclient://party/KOD).
+// Kto ma link, może dołączyć bez bycia znajomym. Kod działa 30 minut i maksymalnie 7 razy.
+const partyCodes = new Map(); // KOD -> { leader, exp, uses }
+function partyLink(uuid) {
+  for (const [k, v] of partyCodes) if (v.exp < now()) partyCodes.delete(k);
+  let code = [...partyCodes].find(([, v]) => v.leader === uuid && v.uses < 7)?.[0];
+  if (!code) {
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    do { code = ''; for (let i = 0; i < 6; i++) code += abc[crypto.randomInt(abc.length)]; } while (partyCodes.has(code));
+    partyCodes.set(code, { leader: uuid, exp: now() + 30 * 60_000, uses: 0 });
+  }
+  const v = partyCodes.get(code);
+  return { code, url: `${PUBLIC_URL}/party?c=${code}`, expires: v.exp, leaderName: user(uuid)?.name || '?' };
+}
+/** Tworzy party dla gracza, jeśli jeszcze go nie ma */
+function ensureParty(uuid) {
+  let p = parties.get(partyOf.get(uuid));
+  if (p) return p;
+  p = { id: crypto.randomUUID(), leader: uuid, members: new Set([uuid]), invited: new Set() };
+  parties.set(p.id, p);
+  partyOf.set(uuid, p.id);
+  const u = user(uuid);
+  u.partiesLed = (u.partiesLed || 0) + 1;
+  save();
+  updateBadges(uuid);
+  return p;
+}
+/** Ktoś dołączył do party: zadanie dzienne dla wszystkich obecnych */
+function partyQuest(p) {
+  if (p.members.size < 2) return;
+  for (const id of p.members) {
+    const u = user(id);
+    if (!u) continue;
+    const d = dailyOf(u);
+    if (!d.prog.partyIds.includes(p.id)) { d.prog.partyIds.push(p.id); d.prog.parties++; questsChanged(u); }
+  }
+}
+
+// ---------------- codzienne zadania ----------------
+// Co dzień (północ w strefie TZ) gracz dostaje 3 zadania. Za każde jest XP, a za serię dni ze wszystkimi
+// zadaniami – kosmetyki (progi ustawia admin w panelu, domyślnie niżej).
+const QUESTS = [
+  { id: 'play30', stat: 'play', goal: 30, xp: 40, pl: 'Zagraj 30 minut', en: 'Play for 30 minutes' },
+  { id: 'play60', stat: 'play', goal: 60, xp: 70, pl: 'Zagraj godzinę', en: 'Play for an hour' },
+  { id: 'server20', stat: 'mp', goal: 20, xp: 50, pl: 'Graj 20 minut na serwerze', en: 'Play 20 minutes on a server' },
+  { id: 'servers2', stat: 'servers', goal: 2, xp: 40, pl: 'Wejdź na 2 różne serwery', en: 'Join 2 different servers' },
+  { id: 'kills10', stat: 'kills', goal: 10, xp: 50, pl: 'Pokonaj 10 graczy', en: 'Defeat 10 players' },
+  { id: 'kills25', stat: 'kills', goal: 25, xp: 90, pl: 'Pokonaj 25 graczy', en: 'Defeat 25 players' },
+  { id: 'dm5', stat: 'dms', goal: 5, xp: 25, pl: 'Wyślij 5 wiadomości znajomym', en: 'Send 5 messages to friends' },
+  { id: 'party', stat: 'parties', goal: 1, xp: 35, pl: 'Zagraj w party ze znajomym', en: 'Play in a party with a friend' },
+];
+const DEFAULT_STREAK = [{ days: 3, cosmetic: 'trail:sparks' }, { days: 7, cosmetic: 'cape:aurora' }, { days: 30, cosmetic: 'wings:angel' }];
+const streakTiers = () => (Array.isArray(db.promo?.questStreak) ? db.promo.questStreak : DEFAULT_STREAK).slice().sort((a, b) => a.days - b.days);
+const questXp = (q) => Number(db.promo?.questXp?.[q.id]) || q.xp;
+
+/** Zadania na dziś: losowe, ale stałe dla gracza i dnia; co najwyżej jedno z każdej grupy */
+function pickQuests(uuid, day) {
+  const h = (s) => crypto.createHash('sha1').update(s).digest().readUInt32BE(0);
+  const order = QUESTS.slice().sort((a, b) => h(uuid + day + a.id) - h(uuid + day + b.id));
+  const out = [];
+  for (const q of order) if (out.length < 3 && !out.some((x) => x.stat === q.stat)) out.push(q.id);
+  return out;
+}
+function dailyOf(u) {
+  const day = dayKey();
+  if (!u.daily || u.daily.day !== day) {
+    u.daily = { day, ids: pickQuests(u.uuid, day), claimed: [], notified: [],
+      prog: { playMs: 0, mpMs: 0, dms: 0, parties: 0, partyIds: [], servers: [], kills0: u.stats?.kills || 0, total0: u.stats?.totalMs || 0,
+        // launcher jeszcze nie przysłał statystyk – punktem startu będą pierwsze, które przyjdą (żeby stare godziny nie zaliczały zadań)
+        needBase: u.stats?.totalMs === undefined } };
+    save();
+  }
+  return u.daily;
+}
+function questProgress(u, q) {
+  const p = dailyOf(u).prog;
+  switch (q.stat) {
+    // czas liczy serwer (gra z modem Gruz) albo launcher po sesji – bierzemy większy
+    case 'play': return Math.floor(Math.max(p.playMs, (u.stats?.totalMs || 0) - p.total0) / 60_000);
+    case 'mp': return Math.floor(p.mpMs / 60_000);
+    case 'servers': return p.servers.length;
+    case 'kills': return Math.max(0, (u.stats?.kills || 0) - p.kills0);
+    case 'dms': return p.dms;
+    case 'parties': return p.parties;
+    default: return 0;
+  }
+}
+function streakOf(u) {
+  const s = u.streak || { n: 0, last: '' };
+  const today = dayKey();
+  // seria przepada, jeśli wczoraj nie było kompletu (dzisiejszy jeszcze może być)
+  const alive = s.last === today || s.last === dayBefore(today);
+  return { n: alive ? s.n : 0, today: s.last === today, best: u.streakBest || 0 };
+}
+function questsView(u) {
+  const d = dailyOf(u);
+  const st = streakOf(u);
+  return {
+    day: d.day, resetsAt: nextMidnight(),
+    quests: d.ids.map((id) => QUESTS.find((q) => q.id === id)).filter(Boolean).map((q) => {
+      const progress = Math.min(q.goal, questProgress(u, q));
+      return { id: q.id, names: { pl: q.pl, en: q.en }, goal: q.goal, progress, xp: questXp(q), done: progress >= q.goal, claimed: d.claimed.includes(q.id) };
+    }),
+    streak: st.n, streakToday: st.today, best: st.best,
+    rewards: streakTiers().map((x) => ({ ...x, got: (u.unlocked || []).includes(x.cosmetic) })),
+  };
+}
+function nextMidnight() {
+  // pierwsza minuta następnego dnia w strefie TZ (działa też przy zmianie czasu)
+  const today = dayKey();
+  let t = Math.ceil(now() / 60_000) * 60_000;
+  while (dayKey(t) === today) t += 15 * 60_000;
+  while (dayKey(t - 60_000) !== today) t -= 60_000;
+  return t;
+}
+const questDirty = new Set();
+/** Po zmianie postępu: powiadomienie o wykonanym zadaniu i odświeżenie listy (z opóźnieniem, hurtem) */
+function questsChanged(u) {
+  const d = dailyOf(u);
+  for (const id of d.ids) {
+    const q = QUESTS.find((x) => x.id === id);
+    if (q && !d.notified.includes(id) && questProgress(u, q) >= q.goal) {
+      d.notified.push(id);
+      sendTo(u.uuid, { t: 'notify', kind: 'quest', id, names: { pl: q.pl, en: q.en }, xp: questXp(q) });
+    }
+  }
+  save();
+  questDirty.add(u.uuid);
+}
+setInterval(() => {
+  for (const id of questDirty) { const u = user(id); if (u && isOnline(id)) sendTo(id, { t: 'quests', ...questsView(u) }); }
+  questDirty.clear();
+}, 3000);
+function claimQuest(u, id) {
+  const d = dailyOf(u);
+  const q = QUESTS.find((x) => x.id === id);
+  if (!q || !d.ids.includes(id)) return { error: 'QUEST_UNKNOWN' };
+  if (d.claimed.includes(id)) return { error: 'QUEST_CLAIMED' };
+  if (questProgress(u, q) < q.goal) return { error: 'QUEST_NOT_DONE' };
+  d.claimed.push(id);
+  u.bonusXp = (u.bonusXp || 0) + questXp(q);
+  let cosmetic = null;
+  if (d.ids.every((x) => d.claimed.includes(x))) {
+    // komplet na dziś: seria +1 i nagrody za progi serii
+    const today = dayKey();
+    const s = u.streak || { n: 0, last: '' };
+    if (s.last !== today) {
+      u.streak = { n: s.last === dayBefore(today) ? s.n + 1 : 1, last: today };
+      u.streakBest = Math.max(u.streakBest || 0, u.streak.n);
+      for (const tr of streakTiers()) {
+        if (u.streak.n >= tr.days && catalog.exists(tr.cosmetic) && !u.unlocked.includes(tr.cosmetic)) { u.unlocked.push(tr.cosmetic); cosmetic = tr.cosmetic; }
+      }
+    }
+  }
+  save();
+  updateBadges(u.uuid);
+  pushMe(u.uuid);
+  if (cosmetic) sendTo(u.uuid, { t: 'unlocked', cosmetic, unlocked: u.unlocked, streak: u.streak.n });
+  return { ok: true, xp: questXp(q), cosmetic, streak: u.streak?.n || 0 };
+}
+// co minutę dopisujemy czas gry (gra z modem Gruz zgłasza menu / świat / serwer)
+setInterval(() => {
+  for (const [uuid, set] of online) {
+    const states = [...set].filter((c) => c.kind === 'game').map((c) => c.presence.state);
+    if (!states.some((s) => s === 'singleplayer' || s === 'multiplayer')) continue;
+    const u = user(uuid);
+    if (!u) continue;
+    const p = dailyOf(u).prog;
+    p.playMs += 60_000;
+    if (states.includes('multiplayer')) p.mpMs += 60_000;
+    questsChanged(u);
+  }
+}, 60_000);
+
+// ---------------- ranking tygodniowy ----------------
+const weeklyListeners = [];
+function weeklyTop(n = 10) {
+  return Object.values(db.users).filter((u) => !u.banned).map((u) => ({ uuid: u.uuid, name: u.name, xp: weeklyXp(u), level: levelOf(u).level }))
+    .filter((x) => x.xp > 0).sort((a, b) => b.xp - a.xp).slice(0, n);
+}
+function weeklyRank(uuid) {
+  const u = user(uuid);
+  if (!u || !weeklyXp(u)) return null;
+  const mine = weeklyXp(u);
+  return 1 + Object.values(db.users).filter((x) => !x.banned && weeklyXp(x) > mine).length;
+}
+/** Nowy tydzień: zapisujemy wyniki poprzedniego, dajemy nagrody i zerujemy licznik */
+function weeklyTick() {
+  const wk = weekKey();
+  if (!db.meta.week) { db.meta.week = wk; save(); return; }
+  if (db.meta.week === wk) return;
+  const prev = db.meta.week;
+  const rows = Object.values(db.users).filter((u) => !u.banned && u.wk?.week === prev)
+    .map((u) => ({ uuid: u.uuid, name: u.name, xp: Math.max(0, xpOf(u) - (u.wk.xp0 || 0)) }))
+    .filter((x) => x.xp > 0).sort((a, b) => b.xp - a.xp).slice(0, 10);
+  const reward = db.promo?.weeklyReward || {};
+  const places = Math.max(0, Math.min(10, Number(reward.places) || 0));
+  const rewarded = [];
+  if (reward.cosmetic && catalog.exists(reward.cosmetic)) {
+    for (const r of rows.slice(0, places)) {
+      const u = user(r.uuid);
+      if (!u.unlocked.includes(reward.cosmetic)) { u.unlocked.push(reward.cosmetic); rewarded.push(r.uuid); sendTo(u.uuid, { t: 'unlocked', cosmetic: reward.cosmetic, unlocked: u.unlocked, weekly: true }); }
+    }
+  }
+  db.meta.lastWeekly = { week: prev, top: rows, cosmetic: reward.cosmetic || null, rewarded, at: now() };
+  db.meta.history = [db.meta.lastWeekly, ...(db.meta.history || [])].slice(0, 12);
+  for (const u of Object.values(db.users)) u.wk = { week: wk, xp0: xpOf(u) };
+  db.meta.week = wk;
+  save();
+  for (const f of weeklyListeners) { try { f(db.meta.lastWeekly); } catch (e) { console.error('[weekly]', e.message); } }
+  for (const uuid of online.keys()) pushMe(uuid);
+}
+setInterval(weeklyTick, 5 * 60_000);
+
+// ---------------- metryki do wykresów w panelu ----------------
+function markActive(uuid, launcherVersion) {
+  const m = db.metrics;
+  const day = dayKey();
+  if (!m.today || m.today.day !== day) m.today = { day, seen: [] };
+  const d = (m.days[day] ||= { active: 0, peak: 0, sessions: 0, versions: {} });
+  d.sessions++;
+  if (!m.today.seen.includes(uuid)) {
+    m.today.seen.push(uuid);
+    d.active = m.today.seen.length;
+    if (launcherVersion) d.versions[launcherVersion] = (d.versions[launcherVersion] || 0) + 1;
+  }
+  d.peak = Math.max(d.peak, online.size);
+  // trzymamy pół roku
+  const keys = Object.keys(m.days).sort();
+  for (const k of keys.slice(0, Math.max(0, keys.length - 190))) delete m.days[k];
+  save();
+}
+
 // ---------------- topka serwerów ----------------
 // Liczymy, na jakich serwerach grają gracze Gruz (unikalni gracze i łączny czas).
 const SECOND_LEVEL = new Set(['co.uk', 'org.uk', 'com.pl', 'net.pl', 'org.pl', 'com.br', 'com.au', 'co.nz', 'com.tr', 'com.ua', 'co.za', 'com.mx']);
@@ -326,6 +597,8 @@ function trackServer(uuid) {
   if (key) {
     const s = (db.servers[key] ||= { ms: 0, players: [], sessions: 0 });
     if (!s.players.includes(uuid)) s.players.push(uuid);
+    const u = user(uuid);
+    if (u) { const d = dailyOf(u); if (!d.prog.servers.includes(key)) { d.prog.servers.push(key); questsChanged(u); } }
     s.sessions = (s.sessions || 0) + 1;
     s.last = now();
     serverSessions.set(uuid, { key, since: now() });
@@ -344,6 +617,22 @@ setInterval(() => {
 
 // ---------------- raporty crashy i łączenie Discorda ----------------
 const crashListeners = [];
+let crashHelp = null; // bot Discord: (raport) => Promise<{ url }>
+async function askForHelp(c, u, report) {
+  if (now() - (u.lastHelpAt || 0) < 5 * 60_000) return c.send({ t: 'crash.result', ok: true, id: report.id, helpError: 'HELP_SLOW' });
+  if (!crashHelp) return c.send({ t: 'crash.result', ok: true, id: report.id, helpError: 'HELP_NO_BOT' });
+  if (!u.discord?.id) return c.send({ t: 'crash.result', ok: true, id: report.id, helpError: 'HELP_NEED_LINK' });
+  try {
+    const r = await crashHelp(report, u);
+    u.lastHelpAt = now();
+    report.ticket = r.url;
+    save();
+    c.send({ t: 'crash.result', ok: true, id: report.id, ticket: r.url });
+  } catch (e) {
+    console.error('[crash help]', e.message);
+    c.send({ t: 'crash.result', ok: true, id: report.id, helpError: /^HELP_/.test(e.message) ? e.message : 'HELP_FAILED' });
+  }
+}
 const linkCodes = new Map(); // KOD -> { uuid, exp }
 /** Zużywa kod z launchera; zwraca uuid gracza albo null */
 function consumeLinkCode(code) {
@@ -394,8 +683,11 @@ const handlers = {
     const u = user(c.uuid);
     const num = (v) => Math.max(0, Math.min(1e13, Number(v) || 0));
     u.stats = { totalMs: num(m.totalMs), sessions: num(m.sessions), longestMs: num(m.longestMs), kills: num(m.kills) };
+    const d = dailyOf(u);
+    if (d.prog.needBase) { d.prog.needBase = false; d.prog.total0 = u.stats.totalMs; d.prog.kills0 = u.stats.kills; }
     save();
     updateBadges(c.uuid);
+    questsChanged(u);
   },
 
   /** Kod na ekskluzywną kosmetykę */
@@ -442,8 +734,17 @@ const handlers = {
     db.crashes.unshift(report);
     db.crashes = db.crashes.slice(0, 300);
     save();
-    c.send({ t: 'crash.result', ok: true, id: report.id });
     for (const f of crashListeners) { try { f(report); } catch (e) { console.error('[crash]', e.message); } }
+    if (m.help) return askForHelp(c, u, report);
+    c.send({ t: 'crash.result', ok: true, id: report.id });
+  },
+
+  /** "Poproś o pomoc" po wysłaniu raportu: ticket na Discordzie z logiem */
+  'crash.help'(c, m) {
+    const u = user(c.uuid);
+    const report = (db.crashes || []).find((r) => r.id === String(m.id || '') && r.uuid === c.uuid);
+    if (!report) return c.send({ t: 'crash.result', ok: false, code: 'NOT_FOUND' });
+    askForHelp(c, u, report);
   },
 
   /** Kod do połączenia konta z Discordem (/gruz link KOD) – ważny 10 minut */
@@ -545,6 +846,8 @@ const handlers = {
     } else if (sticker) msg.sticker = sticker;
     else msg.text = text;
     user(c.uuid).dmsSent = (user(c.uuid).dmsSent || 0) + 1;
+    dailyOf(user(c.uuid)).prog.dms++;
+    questsChanged(user(c.uuid));
     (db.dms[key] ||= []).push(msg);
     if (db.dms[key].length > 200) {
       // stare wiadomości głosowe kasujemy razem z historią
@@ -566,15 +869,7 @@ const handlers = {
   'party.invite'(c, m) {
     const target = dashed(m.uuid);
     if (!user(c.uuid).friends.includes(target)) return c.send({ t: 'error', code: 'NOT_FRIENDS' });
-    let p = parties.get(partyOf.get(c.uuid));
-    if (!p) {
-      p = { id: crypto.randomUUID(), leader: c.uuid, members: new Set([c.uuid]), invited: new Set() };
-      parties.set(p.id, p);
-      partyOf.set(c.uuid, p.id);
-      user(c.uuid).partiesLed = (user(c.uuid).partiesLed || 0) + 1;
-      save();
-      updateBadges(c.uuid);
-    }
+    const p = ensureParty(c.uuid);
     if (p.members.size >= 8) return c.send({ t: 'error', code: 'PARTY_FULL' });
     p.invited.add(target);
     pushParty(p);
@@ -591,6 +886,42 @@ const handlers = {
     user(c.uuid).partiesJoined = (user(c.uuid).partiesJoined || 0) + 1;
     save();
     pushParty(p);
+    partyQuest(p);
+  },
+
+  /** Link do party (dla znajomych spoza listy znajomych, np. na Discordzie) */
+  'party.link'(c) {
+    c.send({ t: 'party.link', ...partyLink(c.uuid) });
+  },
+
+  /** Wejście do party z linku gruzclient://party/KOD */
+  'party.join'(c, m) {
+    const code = String(m.code || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+    const entry = partyCodes.get(code);
+    if (!entry || entry.exp < now() || entry.uses >= 7) return c.send({ t: 'error', code: 'PARTY_LINK_EXPIRED' });
+    if (entry.leader === c.uuid) return c.send({ t: 'error', code: 'PARTY_LINK_SELF' });
+    if (!isOnline(entry.leader)) return c.send({ t: 'error', code: 'PARTY_LEADER_OFFLINE', name: user(entry.leader)?.name });
+    const p = ensureParty(entry.leader);
+    if (p.members.has(c.uuid)) return pushParty(p);
+    if (p.members.size >= 8) return c.send({ t: 'error', code: 'PARTY_FULL' });
+    entry.uses++;
+    leaveParty(c.uuid);
+    p.invited.delete(c.uuid);
+    p.members.add(c.uuid);
+    partyOf.set(c.uuid, p.id);
+    user(c.uuid).partiesJoined = (user(c.uuid).partiesJoined || 0) + 1;
+    save();
+    pushParty(p);
+    partyQuest(p);
+    for (const id of p.members) if (id !== c.uuid) sendTo(id, { t: 'notify', kind: 'partyJoined', name: user(c.uuid).name });
+  },
+
+  'quests.get'(c) { c.send({ t: 'quests', ...questsView(user(c.uuid)) }); },
+  'quests.claim'(c, m) {
+    const u = user(c.uuid);
+    const r = claimQuest(u, String(m.id || ''));
+    c.send({ t: 'quests.claimed', ...r, id: m.id });
+    c.send({ t: 'quests', ...questsView(u) });
   },
 
   'party.leave'(c) { leaveParty(c.uuid); },
@@ -653,6 +984,7 @@ const server = http.createServer((req, res) => {
     }));
   }
   if (url.pathname === '/join') return joinPage(res, url);
+  if (url.pathname === '/party') return partyPage(res, url);
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin.route(req, res, url, adminCtx);
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
   res.end('Gruz Client server ' + VERSION);
@@ -677,11 +1009,34 @@ ${ok ? `<h1>Opening Gruz Client…</h1><p>Joining</p><code>${e(ip)}</code><br><a
 </div></body></html>`);
 }
 
+/** Strona z linku do party: otwiera launcher (gruzclient://party/<kod>) */
+function partyPage(res, url) {
+  const code = String(url.searchParams.get('c') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+  const entry = partyCodes.get(code);
+  const ok = !!entry && entry.exp > now() && entry.uses < 7;
+  const leader = ok ? user(entry.leader)?.name || '?' : '';
+  const e = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+  const deep = `gruzclient://party/${code}`;
+  res.writeHead(ok ? 200 : 410, { 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY' });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${ok ? `Join ${e(leader)}'s party` : 'Party link expired'} · Gruz Client</title>${ok ? `<meta http-equiv="refresh" content="0;url=${e(deep)}">` : ''}
+<meta property="og:title" content="${ok ? `${e(leader)} invites you to a party` : 'Party link expired'}"><meta property="og:description" content="Gruz Client – play Minecraft together">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07050c;color:#f1ecf8;font:16px/1.5 'Segoe UI',system-ui,sans-serif}
+.c{max-width:420px;padding:32px;border:1px solid #2b2139;background:#0c0912;text-align:center}h1{margin:0 0 6px;font-size:22px;color:#dcaaff}
+a{display:inline-block;margin:14px 6px 0;padding:10px 18px;background:#b45cff;color:#12051f;font-weight:700;text-decoration:none}
+a.g{background:transparent;color:#f1ecf8;border:1px solid #2b2139}p{color:#9488a8}img{image-rendering:pixelated}</style></head><body><div class="c">
+${ok ? `<img src="https://mc-heads.net/avatar/${e(entry.leader)}/72" width="72" height="72" alt=""><h1>${e(leader)}'s party</h1><p>Opening Gruz Client…</p>
+<a href="${e(deep)}">Join party</a><a class="g" href="https://github.com/ilikemoneyrux/gruz-client/releases/latest">Download Gruz Client</a>
+<p>Nothing happened? Install Gruz Client, log in, then click "Join party" again.<br><small>Link works for 30 minutes.</small></p>`
+    : '<h1>This party link has expired</h1><p>Ask your friend for a new one (<b>/gruz invite</b> on Discord or <b>Copy party link</b> in the launcher).</p>'}
+</div></body></html>`);
+}
+
 /** To, czego potrzebuje panel admina */
 const adminCtx = {
   password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
-  updateBadges, pushMe, catalog, tiers, grantInviteRewards,
+  updateBadges, pushMe, catalog, tiers, grantInviteRewards, dayKey, weekKey, weeklyXp, weeklyTop, QUESTS, streakTiers, DEFAULT_STREAK,
   bot: null, // uzupełnia bot Discord (panel "Bot")
 };
 
@@ -708,6 +1063,7 @@ wss.on('connection', (ws, req) => {
     if (!c.uuid) {
       if (m.t === 'hello') {
         c.kind = m.client === 'game' ? 'game' : 'launcher';
+        c.version = String(m.version || '').replace(/[^\w.+-]/g, '').slice(0, 16);
         return c.send({ t: 'challenge', serverId: c.serverId, version: VERSION });
       }
       if (m.t === 'auth') {
@@ -718,12 +1074,16 @@ wss.on('connection', (ws, req) => {
         c.uuid = who.uuid;
         c.name = who.name;
         ensureUser(who.uuid, who.name);
+        if (c.kind === 'launcher' && c.version) user(who.uuid).launcher = c.version;
+        markActive(who.uuid, c.kind === 'launcher' ? c.version : '');
         updateBadges(who.uuid);
         grantInviteRewards(user(who.uuid));
         if (!online.has(c.uuid)) online.set(c.uuid, new Set());
         online.get(c.uuid).add(c);
+        const today = db.metrics.days[dayKey()];
+        if (today) today.peak = Math.max(today.peak || 0, online.size);
         c.send({ t: 'welcome', uuid: c.uuid, name: c.name, party: partyOf.has(c.uuid) ? partyView(parties.get(partyOf.get(c.uuid))) : null,
-          me: meView(user(c.uuid)) });
+          me: meView(user(c.uuid)), quests: questsView(user(c.uuid)) });
         pushFriends(c.uuid);
         announce(c.uuid);
         return;
@@ -761,12 +1121,19 @@ setInterval(() => {
 (async () => {
   const where = await storage.init();
   for (const [name, key] of FILES) db[key] = await storage.load(name, db[key]);
+  db.meta ||= {};
+  db.metrics ||= { days: {}, today: null };
+  db.metrics.days ||= {};
+  weeklyTick();
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
     db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
     tiers, grantInviteRewards, inviteCodeOf, onInvite: (f) => inviteListeners.push(f), registerAdmin: (api) => { adminCtx.bot = api; },
     onCrash: (f) => crashListeners.push(f),
+    onCrashHelp: (f) => { crashHelp = f; },
+    onLevel: (f) => levelListeners.push(f), onWeekly: (f) => weeklyListeners.push(f),
+    partyLink, weeklyTop, weeklyXp, weeklyRank, weekKey, questsView,
     badgeName: (id) => { const b = BADGES.find((x) => x.id === id); return b && (db.discord?.lang === 'pl' ? b.pl : b.en || b.pl); },
   });
 })().catch((e) => { console.error('Nie udało się uruchomić serwera:', e); process.exit(1); });

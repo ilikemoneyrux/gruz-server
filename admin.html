@@ -76,6 +76,18 @@
   .two label, .one label { display: block; font-size: 12px; color: var(--mute); }
   .two input, .one input { width: 100%; }
   @media (max-width: 640px) { .two { grid-template-columns: 1fr; } }
+  .chart { width: 100%; height: auto; display: block; }
+  .chart text { fill: var(--mute); font-size: 11px; font-family: 'Segoe UI', system-ui, sans-serif; }
+  .chart .grid line { stroke: var(--seam); stroke-width: 1; }
+  .chart rect:hover, .chart circle:hover { opacity: .75; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--mute); margin: 4px 0 8px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+  .chart-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .chart-head h2 { margin: 0; flex: 1; }
+  .srcbar { display: flex; height: 14px; background: var(--rubble); margin: 8px 0 4px; overflow: hidden; }
+  .srcbar span { display: block; height: 100%; }
+  .mini td { padding: 5px 8px; }
+  .lvrow { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; } .lvrow input { width: 80px; } .lvrow select { flex: 1; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -101,12 +113,14 @@
     <div class="sp"></div>
     <nav id="nav">
       <button data-tab="overview" class="on">Przegląd</button>
+      <button data-tab="growth">Wykresy</button>
       <button data-tab="users">Gracze</button>
       <button data-tab="codes">Kody</button>
       <button data-tab="news">Newsy</button>
       <button data-tab="promo">Partnerzy i reklamy</button>
       <button data-tab="creators">Twórcy</button>
       <button data-tab="invites">Zaproszenia</button>
+      <button data-tab="quests">Zadania i ranking</button>
       <button data-tab="bot">Bot Discord</button>
       <button data-tab="crashes">Crashe</button>
     </nav>
@@ -116,6 +130,53 @@
   <section data-panel="overview">
     <div class="card"><h2>Serwer</h2><div class="grid" id="stats"></div></div>
     <div class="card"><h2>Najwięcej godzin</h2><table><thead><tr><th>Gracz</th><th>Poziom</th><th>Godziny</th></tr></thead><tbody id="top"></tbody></table></div>
+  </section>
+
+  <section data-panel="growth" hidden>
+    <div class="card">
+      <div class="chart-head"><h2>Nowi gracze dziennie</h2>
+        <select id="gr-days"><option value="14">14 dni</option><option value="30" selected>30 dni</option><option value="90">90 dni</option><option value="180">180 dni</option></select></div>
+      <div class="legend" id="gr-legend"></div>
+      <div id="gr-new"></div>
+    </div>
+    <div class="card">
+      <h2>Aktywni gracze i szczyt online</h2>
+      <div class="legend"><span><i style="background:#dcaaff"></i>Aktywni w danym dniu</span><span><i style="background:#7dffb2"></i>Najwięcej online naraz</span></div>
+      <div id="gr-active"></div>
+      <p class="muted" id="gr-tracked"></p>
+    </div>
+    <div class="grid2">
+      <div class="card"><h2>Skąd przyszli (wybrany okres)</h2><div id="gr-sources"></div></div>
+      <div class="card"><h2>Kody twórców</h2><table class="mini"><tbody id="gr-creators"></tbody></table></div>
+    </div>
+    <div class="grid2" style="margin-top:16px">
+      <div class="card"><h2>Najwięcej zaproszonych znajomych</h2><table class="mini"><tbody id="gr-inviters"></tbody></table></div>
+      <div class="card"><h2>Wersje launchera (aktywni gracze)</h2><table class="mini"><tbody id="gr-versions"></tbody></table></div>
+    </div>
+  </section>
+
+  <section data-panel="quests" hidden>
+    <div class="grid2">
+      <div class="card">
+        <h2>Codzienne zadania</h2>
+        <p class="muted" id="q-today"></p>
+        <table class="mini"><thead><tr><th>Zadanie</th><th>Cel</th><th>XP</th><th>Odebrane dziś</th></tr></thead><tbody id="q-list"></tbody></table>
+        <h2 style="margin-top:16px">Nagrody za serię dni (wszystkie 3 zadania)</h2>
+        <div id="q-streak"></div>
+        <div class="row" style="margin-top:6px"><button class="ghost" id="q-streak-add">+ Dodaj próg</button></div>
+        <div class="row" style="margin-top:12px"><button class="btn" id="q-save">Zapisz</button><span class="ok-msg" id="q-ok"></span><span class="err" id="q-err"></span></div>
+      </div>
+      <div class="card">
+        <h2 id="w-title">Ranking tygodnia</h2>
+        <table class="mini"><thead><tr><th>#</th><th>Gracz</th><th>XP w tygodniu</th></tr></thead><tbody id="w-list"></tbody></table>
+        <h2 style="margin-top:16px">Nagroda tygodniowa</h2>
+        <div class="two"><label class="blk">Ile pierwszych miejsc<input id="w-places" type="number" min="0" max="10" /></label><label class="blk">Kosmetyka<select id="w-cos"></select></label></div>
+        <p class="muted">W poniedziałek o północy bot ogłasza wyniki na kanale rankingu (ustaw go w zakładce Bot Discord), a top dostaje kosmetykę od razu na konto.</p>
+        <div class="row"><button class="btn" id="w-save">Zapisz nagrodę</button><button class="ghost" id="w-post">Wyślij obecny ranking na Discorda</button><span class="ok-msg" id="w-ok"></span><span class="err" id="w-err"></span></div>
+        <h2 style="margin-top:16px">Poprzedni tydzień</h2><div id="w-last" class="muted"></div>
+        <h2 style="margin-top:16px">Najdłuższe serie</h2><table class="mini"><tbody id="q-streaks"></tbody></table>
+      </div>
+    </div>
   </section>
 
   <section data-panel="users" hidden>
@@ -230,6 +291,7 @@
           <label class="blk">Kanał: ogłoszenia nowych wersji<select id="b-ch-updates" class="ch-sel"></select></label>
           <label class="blk">Kanał: logi (tickety, weryfikacja, zaproszenia)<select id="b-ch-logs" class="ch-sel"></select></label>
           <label class="blk">Kanał: raporty crashy (tylko ekipa!)<select id="b-ch-crashes" class="ch-sel"></select></label>
+          <label class="blk">Kanał: ranking tygodniowy<select id="b-ch-ranking" class="ch-sel"></select></label>
           <label class="blk">Rola po połączeniu konta (Gruz Member)<select id="b-member" class="role-sel"></select></label>
           <label class="blk">Rola ekipy (widzi tickety)<select id="b-staff" class="role-sel"></select></label>
           <label class="blk">Role partnerów / twórców (mogą używać /gruzpartner)</label><div class="checks" id="b-partners"></div>
@@ -267,6 +329,14 @@
           <h2 style="margin-top:18px">Trwające</h2><div id="g-list"></div>
         </div>
       </div>
+      <div class="card" style="margin-top:16px">
+        <h2>Role za poziom Gruz</h2>
+        <p class="muted">Gracz z połączonym kontem (/gruz link) dostaje rolę, gdy wbije poziom. Rola bota musi być wyżej niż te role.</p>
+        <div id="lv-list"></div>
+        <div class="row" style="margin:6px 0 10px"><button class="ghost" id="lv-add">+ Dodaj rolę</button></div>
+        <div class="checks"><label><input type="checkbox" id="lv-stack" />Zostaw niższe role (domyślnie gracz ma tylko rolę za najwyższy poziom)</label></div>
+        <div class="row" style="margin-top:12px"><button class="btn" id="lv-save">Zapisz role</button><button class="ghost" id="lv-sync">Sprawdź wszystkich teraz</button><span class="ok-msg" id="lv-ok"></span><span class="err" id="lv-err"></span></div>
+      </div>
       <div class="grid2" style="margin-top:16px">
         <div class="card">
           <h2>Tickety</h2>
@@ -289,7 +359,7 @@
   </section>
 
   <section data-panel="crashes" hidden>
-    <div class="card"><h2>Raporty crashy</h2><table><thead><tr><th>Kiedy</th><th>Gracz</th><th>Wersja</th><th>Typ</th><th>Podejrzane mody</th><th></th></tr></thead><tbody id="crashes"></tbody></table></div>
+    <div class="card"><h2>Raporty crashy</h2><table><thead><tr><th>Kiedy</th><th>Gracz</th><th>Wersja</th><th>Typ</th><th>Podejrzane mody</th><th>Ticket</th><th></th></tr></thead><tbody id="crashes"></tbody></table></div>
     <div class="card" id="crash-detail" hidden><h2 id="crash-title"></h2><p class="muted" id="crash-note"></p><pre class="log" id="crash-log"></pre></div>
   </section>
 </div>
@@ -341,7 +411,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -525,8 +595,9 @@
     const list = await api('crashes');
     $('#crashes').innerHTML = list.map((r) => `<tr><td class="muted">${ago(r.at)}</td><td>${esc(r.name)}</td>
       <td>${esc(r.mc || '?')} · ${esc(r.launcher || '?')}</td><td>${esc(r.kind || '?')}</td><td>${esc((r.mods || []).join(', '))}</td>
+      <td>${r.ticket ? `<a href="${esc(r.ticket)}" target="_blank" rel="noopener" style="color:var(--hot)">Otwórz</a>` : '<span class="muted">—</span>'}</td>
       <td><button class="ghost" data-open="${esc(r.id)}">Log</button></td></tr>`).join('')
-      || '<tr><td colspan="6" class="muted">Brak raportów.</td></tr>';
+      || '<tr><td colspan="7" class="muted">Brak raportów.</td></tr>';
   }
   $('#crashes').addEventListener('click', async (e) => {
     const id = e.target.dataset.open;
@@ -587,7 +658,10 @@
     const chOpts = (sel) => '<option value="">— brak —</option>' + bot.channels.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>#${esc(x.name)}${x.parent ? ' · ' + esc(x.parent) : ''}</option>`).join('');
     const roleOpts = (sel) => '<option value="">— brak —</option>' + bot.roles.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>@${esc(r.name)}</option>`).join('');
     $('#b-lang').value = c.lang;
-    for (const k of ['status', 'updates', 'logs', 'crashes']) $('#b-ch-' + k).innerHTML = chOpts(c.channels[k]);
+    for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking']) $('#b-ch-' + k).innerHTML = chOpts(c.channels[k]);
+    lvRoleOpts = roleOpts;
+    $('#lv-list').innerHTML = (c.levelRoles || []).map((x) => lvRow(x)).join('') || '<p class="muted" id="lv-empty">Brak ról za poziom.</p>';
+    $('#lv-stack').checked = !!c.levelStack;
     for (const id of ['#a-ch', '#e-ch', '#g-ch', '#tk-ch', '#v-ch']) { const keep = $(id).value; $(id).innerHTML = chOpts(keep); }
     $('#b-member').innerHTML = roleOpts(c.memberRole);
     $('#b-staff').innerHTML = roleOpts(c.staffRole);
@@ -604,7 +678,7 @@
   }
   $('#b-save').addEventListener('click', () => act('#b-save-ok', '#b-save-err', () => api('bot/config', { method: 'POST', body: {
     lang: $('#b-lang').value, memberRole: $('#b-member').value, staffRole: $('#b-staff').value,
-    channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value },
+    channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value, ranking: $('#b-ch-ranking').value },
     partnerRoles: [...document.querySelectorAll('#b-partners input:checked')].map((x) => x.value),
   } })));
   $('#b-release').addEventListener('click', () => act('#b-rel-ok', '#b-rel-err', () => api('bot/release', { method: 'POST' })));
@@ -639,6 +713,126 @@
   });
   $('#tk-post').addEventListener('click', () => act('#tk-ok', '#tk-err', () => api('bot/panel', { method: 'POST', body: { kind: 'tickets', channelId: $('#tk-ch').value } })));
   $('#v-post').addEventListener('click', () => act('#v-ok', '#v-err', () => api('bot/panel', { method: 'POST', body: { kind: 'verify', channelId: $('#v-ch').value, roleId: $('#v-role').value, minAge: $('#v-age').value } })));
+
+
+  // ---------- role za poziom ----------
+  let lvRoleOpts = () => '';
+  const lvRow = (x = { level: '', roleId: '' }) => `<div class="lvrow"><span class="muted">od poziomu</span><input type="number" min="1" max="200" value="${esc(x.level)}" data-lv />
+    <select data-role>${lvRoleOpts(x.roleId)}</select><button class="ghost danger" data-lvrm>Usuń</button></div>`;
+  $('#lv-add').addEventListener('click', () => { $('#lv-empty')?.remove(); $('#lv-list').insertAdjacentHTML('beforeend', lvRow()); });
+  $('#lv-list').addEventListener('click', (e) => { if (e.target.dataset.lvrm !== undefined) e.target.closest('.lvrow').remove(); });
+  $('#lv-save').addEventListener('click', () => act('#lv-ok', '#lv-err', () => api('bot/config', { method: 'POST', body: {
+    levelStack: $('#lv-stack').checked,
+    levelRoles: [...document.querySelectorAll('#lv-list .lvrow')].map((r) => ({ level: r.querySelector('[data-lv]').value, roleId: r.querySelector('[data-role]').value })).filter((x) => x.level && x.roleId),
+  } })));
+  $('#lv-sync').addEventListener('click', async () => {
+    $('#lv-err').textContent = '';
+    try { const r = await api('bot/levels-sync', { method: 'POST' }); flash('#lv-ok', `Zmieniono role u ${r.changed} graczy ✓`); } catch (err) { $('#lv-err').textContent = err.message; }
+  });
+
+  // ---------- wykresy ----------
+  const SRC = [['organic', 'Sami (bez kodu)', '#8f84a6'], ['creator', 'Kod twórcy', '#b45cff'], ['friend', 'Zaproszenie znajomego', '#5ce1e6']];
+  const dm = (k) => k.slice(8, 10) + '.' + k.slice(5, 7);
+  // górna granica osi: 4 równe, całkowite kroki (1, 2, 5, 10, 20, 50…)
+  const niceMax = (v) => {
+    const raw = Math.max(1, v) / 4;
+    if (raw <= 10) return 4 * Math.ceil(raw);
+    const p = 10 ** Math.floor(Math.log10(raw));
+    return 4 * [1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((n) => n * p >= raw) * p;
+  };
+  function axes(max, n, W, H, L, B, labels) {
+    let g = '<g class="grid">';
+    for (let i = 0; i <= 4; i++) {
+      const y = H - B - (H - B - 10) * i / 4;
+      g += `<line x1="${L}" x2="${W - 6}" y1="${y}" y2="${y}" /><text x="${L - 6}" y="${y + 4}" text-anchor="end">${Math.round(max * i / 4)}</text>`;
+    }
+    g += '</g>';
+    const step = Math.ceil(n / 12);
+    const cw = (W - L - 6) / n;
+    labels.forEach((l, i) => { if (i % step === 0 || i === n - 1) g += `<text x="${L + cw * i + cw / 2}" y="${H - 8}" text-anchor="middle">${esc(l)}</text>`; });
+    return { g, cw };
+  }
+  function stacked(rows) {
+    const W = 1000, H = 260, L = 38, B = 26;
+    const tot = rows.map((r) => SRC.reduce((a, [k]) => a + r[k], 0));
+    const max = niceMax(Math.max(1, ...tot));
+    const { g, cw } = axes(max, rows.length, W, H, L, B, rows.map((r) => dm(r.day)));
+    let bars = '';
+    rows.forEach((r, i) => {
+      let y = H - B;
+      const x = L + cw * i + cw * 0.15, w = Math.max(1, cw * 0.7);
+      for (const [k, label, color] of SRC) {
+        if (!r[k]) continue;
+        const h = (H - B - 10) * r[k] / max;
+        y -= h;
+        bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}"><title>${dm(r.day)} · ${label}: ${r[k]}</title></rect>`;
+      }
+      if (tot[i]) bars += `<rect x="${x.toFixed(1)}" y="${(H - B - (H - B - 10) * tot[i] / max - 1).toFixed(1)}" width="${w.toFixed(1)}" height="1" fill="transparent"><title>${dm(r.day)} · razem: ${tot[i]}</title></rect>`;
+    });
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Nowi gracze dziennie">${g}${bars}</svg>`;
+  }
+  function lines(rows, series, since) {
+    const W = 1000, H = 220, L = 38, B = 26;
+    const max = niceMax(Math.max(1, ...rows.flatMap((r) => series.map(([k]) => r[k]))));
+    const { g, cw } = axes(max, rows.length, W, H, L, B, rows.map((r) => dm(r.day)));
+    let out = '';
+    for (const [k, label, color] of series) {
+      // dni sprzed początku pomiarów pomijamy (zamiast rysować fałszywe zera)
+      const pts = rows.map((r, i) => (since && r.day >= since ? [L + cw * i + cw / 2, H - B - (H - B - 10) * r[k] / max, i] : null)).filter(Boolean);
+      out += `<polyline fill="none" stroke="${color}" stroke-width="2" points="${pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ')}" />`;
+      out += pts.map((p) => `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${color}"><title>${dm(rows[p[2]].day)} · ${label}: ${rows[p[2]][k]}</title></circle>`).join('');
+    }
+    return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Aktywni gracze">${g}${out}</svg>`;
+  }
+  const miniRows = (list, unit = '') => list.map((x) => `<tr><td>${esc(x.name)}</td><td style="text-align:right"><b>${x.n}</b>${unit}</td></tr>`).join('') || '<tr><td class="muted">Brak danych.</td></tr>';
+  async function loadGrowth() {
+    const g = await api('growth?days=' + $('#gr-days').value);
+    $('#gr-legend').innerHTML = SRC.map(([, label, color]) => `<span><i style="background:${color}"></i>${label}</span>`).join('');
+    $('#gr-new').innerHTML = stacked(g.days);
+    $('#gr-active').innerHTML = lines(g.days, [['active', 'Aktywni', '#dcaaff'], ['peak', 'Szczyt online', '#7dffb2']], g.trackedSince);
+    $('#gr-tracked').textContent = g.trackedSince ? `Aktywność liczymy od ${g.trackedSince} (wcześniejszych dni nie ma w danych).` : 'Aktywność zacznie się liczyć od pierwszego logowania po aktualizacji serwera.';
+    const T = g.totals;
+    const pct = (n) => (T.all ? Math.round(n * 100 / T.all) : 0);
+    $('#gr-sources').innerHTML = `<p><b style="font-size:22px;color:var(--hot)">${T.all}</b> <span class="muted">nowych graczy</span></p>
+      <div class="srcbar">${SRC.map(([k, , color]) => `<span style="width:${pct(T[k])}%;background:${color}" title="${pct(T[k])}%"></span>`).join('')}</div>
+      <table class="mini">${SRC.map(([k, label, color]) => `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${color};margin-right:6px"></i>${label}</td><td style="text-align:right"><b>${T[k]}</b> <span class="muted">${pct(T[k])}%</span></td></tr>`).join('')}</table>
+      <p class="muted" style="margin-top:10px">Wróciło po ≥1 dniu: <b>${g.retention.back}</b> z ${g.retention.fresh} nowych (${g.retention.fresh ? Math.round(g.retention.back * 100 / g.retention.fresh) : 0}%).</p>`;
+    $('#gr-creators').innerHTML = miniRows(g.creators);
+    $('#gr-inviters').innerHTML = miniRows(g.inviters);
+    $('#gr-versions').innerHTML = miniRows(g.versions.map((v) => ({ ...v, name: 'v' + v.name })));
+  }
+  $('#gr-days').addEventListener('change', () => loadGrowth().catch(() => {}));
+
+  // ---------- zadania i ranking ----------
+  let qCos = [];
+  const streakRow = (x = { days: '', cosmetic: '' }) => `<div class="tier"><span class="muted">seria</span><input type="number" min="1" max="365" value="${esc(x.days)}" data-days /><span class="muted">dni →</span><select data-cos>${cosOpts(x.cosmetic, qCos)}</select><button class="ghost danger" data-qrm>Usuń</button></div>`;
+  async function loadQuests() {
+    const q = await api('quests');
+    qCos = q.cosmetics;
+    $('#q-today').textContent = `Dziś zadania otworzyło ${q.today.players} graczy, komplet zrobiło ${q.today.complete}. Zadania zmieniają się o północy.`;
+    $('#q-list').innerHTML = q.quests.map((x) => `<tr><td>${esc(x.pl)}<div class="muted" style="font-size:12px">${esc(x.en)}</div></td><td>${x.goal}</td>
+      <td><input type="number" min="1" max="1000" value="${x.xp}" data-qxp="${esc(x.id)}" style="width:70px" /></td><td>${x.claimedToday}</td></tr>`).join('');
+    $('#q-streak').innerHTML = q.streak.map(streakRow).join('');
+    $('#w-title').textContent = 'Ranking tygodnia · ' + q.week;
+    $('#w-list').innerHTML = q.weekly.map((u, i) => `<tr><td>${i + 1}</td><td><img src="https://mc-heads.net/avatar/${esc(u.uuid)}/22" alt="">${esc(u.name)}</td><td><b>${u.xp}</b></td></tr>`).join('') || '<tr><td colspan="3" class="muted">Nikt jeszcze nie zdobył XP w tym tygodniu.</td></tr>';
+    $('#w-places').value = q.weeklyReward.places || 0;
+    $('#w-cos').innerHTML = cosOpts(q.weeklyReward.cosmetic, qCos, '— bez nagrody —');
+    const lw = q.lastWeekly;
+    $('#w-last').innerHTML = lw ? `${esc(lw.week)}: ${lw.top.slice(0, 3).map((x, i) => `${['🥇', '🥈', '🥉'][i]} ${esc(x.name)} (${x.xp} XP)`).join(' · ') || 'brak wyników'}` : 'Jeszcze nie było podsumowania.';
+    $('#q-streaks').innerHTML = q.streaks.map((x) => `<tr><td>${esc(x.name)}</td><td style="text-align:right"><b>${x.n}</b> dni <span class="muted">(rekord ${x.best})</span></td></tr>`).join('') || '<tr><td class="muted">Brak.</td></tr>';
+  }
+  $('#q-streak-add').addEventListener('click', () => $('#q-streak').insertAdjacentHTML('beforeend', streakRow()));
+  $('#q-streak').addEventListener('click', (e) => { if (e.target.dataset.qrm !== undefined) e.target.closest('.tier').remove(); });
+  async function qAct(okId, errId, fn) {
+    $(errId).textContent = '';
+    try { const r = await fn(); flash(okId, r?.url ? 'Wysłano ✓' : 'Zapisano ✓'); await loadQuests(); } catch (err) { $(errId).textContent = err.message; }
+  }
+  $('#q-save').addEventListener('click', () => qAct('#q-ok', '#q-err', () => api('quests', { method: 'POST', body: {
+    xp: Object.fromEntries([...document.querySelectorAll('[data-qxp]')].map((i) => [i.dataset.qxp, i.value])),
+    streak: [...document.querySelectorAll('#q-streak .tier')].map((r) => ({ days: r.querySelector('[data-days]').value, cosmetic: r.querySelector('[data-cos]').value })),
+  } })));
+  $('#w-save').addEventListener('click', () => qAct('#w-ok', '#w-err', () => api('quests', { method: 'POST', body: { weeklyReward: { places: $('#w-places').value, cosmetic: $('#w-cos').value } } })));
+  $('#w-post').addEventListener('click', () => qAct('#w-ok', '#w-err', () => api('bot/ranking', { method: 'POST' })));
 
   function start() { show('app'); loadStats().catch(() => {}); }
   if (!ENABLED) show('disabled');

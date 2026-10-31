@@ -37,7 +37,11 @@ const publicCmd = new SlashCommandBuilder()
     .addStringOption((o) => o.setName('code').setDescription('6-character code from Launcher → Friends → Link Discord').setRequired(true).setMinLength(6).setMaxLength(6)))
   .addSubcommand((s) => s.setName('unlink').setDescription('Unlink your Minecraft account'))
   .addSubcommand((s) => s.setName('online').setDescription('Who is playing Gruz Client right now'))
-  .addSubcommand((s) => s.setName('top').setDescription('Most hours on Gruz Client'))
+  .addSubcommand((s) => s.setName('top').setDescription('Gruz Client leaderboard')
+    .addStringOption((o) => o.setName('period').setDescription('This week (XP) or all time (hours)')
+      .addChoices({ name: 'This week', value: 'week' }, { name: 'All time', value: 'all' })))
+  .addSubcommand((s) => s.setName('invite').setDescription('Post a link that lets anyone join your Gruz party')
+    .addStringOption((o) => o.setName('message').setDescription('e.g. "Bedwars 4v4, need 2 more"').setMaxLength(120)))
   .addSubcommand((s) => s.setName('skin').setDescription('Skin preview with the Gruz cape')
     .addStringOption((o) => o.setName('nick').setDescription('Minecraft nickname').setRequired(true)))
   .addSubcommand((s) => s.setName('server').setDescription('Minecraft server status')
@@ -98,7 +102,18 @@ const adminCmd = new SlashCommandBuilder()
     .addSubcommand((s) => s.setName('member-role').setDescription('Role given after linking a Minecraft account (e.g. Gruz Member)')
       .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true)))
     .addSubcommand((s) => s.setName('partner-role').setDescription('Add/remove a role that can use /gruzpartner (e.g. Partner, Content Creator)')
-      .addRoleOption((o) => o.setName('role').setDescription('Role (run again to remove)').setRequired(true))))
+      .addRoleOption((o) => o.setName('role').setDescription('Role (run again to remove)').setRequired(true)))
+    .addSubcommand((s) => s.setName('ranking-channel').setDescription('Channel for the weekly XP ranking (posted every Monday)')
+      .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))))
+  .addSubcommandGroup((g) => g.setName('levels').setDescription('Discord roles for Gruz levels')
+    .addSubcommand((s) => s.setName('set').setDescription('Give a role to linked players from this level up')
+      .addIntegerOption((o) => o.setName('level').setDescription('Gruz level').setRequired(true).setMinValue(1).setMaxValue(200))
+      .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true)))
+    .addSubcommand((s) => s.setName('remove').setDescription('Remove the role for a level')
+      .addIntegerOption((o) => o.setName('level').setDescription('Gruz level').setRequired(true).setMinValue(1).setMaxValue(200)))
+    .addSubcommand((s) => s.setName('list').setDescription('Show level roles'))
+    .addSubcommand((s) => s.setName('sync').setDescription('Check every linked player now')))
+  .addSubcommand((s) => s.setName('ranking').setDescription('Post the current weekly ranking now'))
   .addSubcommandGroup((g) => g.setName('invites').setDescription('Rewards for inviting friends')
     .addSubcommand((s) => s.setName('set').setDescription('Add or change a reward: invite N friends -> get a cosmetic')
       .addIntegerOption((o) => o.setName('count').setDescription('How many invited friends').setRequired(true).setMinValue(1).setMaxValue(1000))
@@ -754,7 +769,7 @@ module.exports = function startDiscord(ctx) {
   const wipePending = new Map();
   function keptChannels(guild) {
     const keep = new Set();
-    for (const id of [statusChannel(), cfg().channels.updates, cfg().channels.logs]) {
+    for (const id of [statusChannel(), cfg().channels.updates, cfg().channels.logs, cfg().channels.crashes, cfg().channels.ranking]) {
       const c = id && guild.channels.cache.get(id);
       if (!c) continue;
       keep.add(c.id);
@@ -828,7 +843,7 @@ module.exports = function startDiscord(ctx) {
       return reply(i, t('cfgMemberRole', { r: `${role}` }));
     }
     const ch = i.options.getChannel('channel', true);
-    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs', 'crashes-channel': 'crashes' }[sub];
+    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs', 'crashes-channel': 'crashes', 'ranking-channel': 'ranking' }[sub];
     c.channels[key] = ch.id;
     if (key === 'status') statusMsg = null;
     if (key === 'updates') c.lastRelease = c.lastRelease || null;
@@ -860,6 +875,7 @@ module.exports = function startDiscord(ctx) {
       catch { roleNote = t('vfRoleHigh', { r: `<@&${c.memberRole}>` }); }
     }
     logTo({ content: t('linkLog', { user: `${i.user} (${i.user.tag})`, nick: u.name }), allowedMentions: { parse: [] } });
+    applyLevelRole(uuid).catch(() => {});
     return i.reply({ embeds: [profileEmbed(u).setAuthor({ name: t('linkOk', { nick: u.name }) })], content: roleNote || undefined, ephemeral: true });
   }
 
@@ -871,6 +887,7 @@ module.exports = function startDiscord(ctx) {
     if (db.users[uuid]) { delete db.users[uuid].discord; ctx.pushMe?.(uuid); }
     save();
     if (c.memberRole && i.inGuild()) i.member.roles.remove(c.memberRole, 'Gruz account unlinked').catch(() => {});
+    if (i.inGuild()) for (const x of levelRoles()) i.member.roles.remove(x.roleId, 'Gruz account unlinked').catch(() => {});
     return reply(i, t('unlinkOk'));
   }
 
@@ -897,6 +914,173 @@ module.exports = function startDiscord(ctx) {
       await ch.send({ embeds: [e], files, allowedMentions: { parse: [] } });
     } catch (e) { console.error('[discord] crash:', e.message); }
   });
+
+
+
+  // ---------------- "Poproś o pomoc" z launchera: ticket z crashem ----------------
+  ctx.onCrashHelp?.(async (r, u) => {
+    const g = await guild().catch(() => null);
+    if (!g) throw new Error('HELP_NO_BOT');
+    const member = await g.members.fetch(u.discord.id).catch(() => null);
+    if (!member) throw new Error('HELP_NOT_IN_GUILD');
+    if (!g.members.me.permissions.has(P.ManageChannels)) throw new Error('HELP_FAILED');
+    const tk = cfg().tickets;
+    const mine = Object.entries(tk.open).filter(([, v]) => v.user === member.id);
+    if (mine.length >= 3) throw new Error('HELP_TOO_MANY');
+    const num = ++tk.counter;
+    const parent = await ticketParent(g);
+    const allowUser = [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.AttachFiles, P.EmbedLinks];
+    const overwrites = [
+      { id: g.roles.everyone.id, deny: [P.ViewChannel] },
+      { id: member.id, allow: allowUser },
+      { id: client.user.id, allow: [...allowUser, P.ManageChannels, P.ManageMessages] },
+    ];
+    if (tk.staffRole) overwrites.push({ id: tk.staffRole, allow: [...allowUser, P.ManageMessages] });
+    const ch = await g.channels.create({
+      name: `${String(num).padStart(4, '0')}-crash-${slug(u.name)}`, type: ChannelType.GuildText, parent: parent.id,
+      topic: `Crash · ${member.user.tag} · ${u.name} · report ${r.id}`, permissionOverwrites: overwrites,
+    });
+    tk.open[ch.id] = { num, user: member.id, cat: 'crash', catName: 'Crash', nick: u.name, at: Date.now(), report: r.id };
+    save();
+    const e = new EmbedBuilder().setColor(RED).setTitle(t('tkCrashTitle', { num, title: r.title || 'Crash' }).slice(0, 250))
+      .setThumbnail(`https://mc-heads.net/avatar/${r.uuid}/96`)
+      .setDescription(r.text ? r.text.slice(0, 1500) : null)
+      .addFields(
+        { name: t('tk.f.user'), value: `${member}`, inline: true },
+        { name: t('tk.f.nick'), value: `\`${u.name}\``, inline: true },
+        { name: t('tk.f.gruz'), value: t('tkGruzYes', { lv: ctx.levelOf(u).level, h: hoursText(u.stats?.totalMs) }), inline: true },
+        { name: 'Minecraft', value: `${r.mc || '?'} ${r.loader || ''}`.trim(), inline: true },
+        { name: 'Gruz', value: `launcher ${r.launcher || '?'} · mod ${r.mod || '-'}`, inline: true },
+        { name: t('tkCrashKind'), value: r.kind || '?', inline: true },
+        ...(r.mods.length ? [{ name: t('tkCrashMods'), value: r.mods.join(', ').slice(0, 1000) }] : []),
+        ...(r.note ? [{ name: t('tkCrashNote'), value: r.note.slice(0, 1000) }] : []),
+        ...(r.excerpt ? [{ name: t('tkCrashExcerpt'), value: '```' + r.excerpt.replace(/```/g, '').slice(0, 900) + '```' }] : []),
+      ).setFooter({ text: `report ${r.id}` }).setTimestamp(new Date(r.at));
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('tk:claim').setLabel(t('tkClaim')).setEmoji('🙋').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('tk:close').setLabel(t('tkClose')).setEmoji('🔒').setStyle(ButtonStyle.Danger),
+    );
+    const files = r.log ? [new AttachmentBuilder(Buffer.from(r.log, 'utf8'), { name: `crash-${r.id}.log` })] : [];
+    await ch.send({
+      content: t('tkCrashWelcome', { user: `${member}`, staff: tk.staffRole ? `<@&${tk.staffRole}>` : '@admin' }),
+      embeds: [e], components: [row], files, allowedMentions: { users: [member.id], roles: tk.staffRole ? [tk.staffRole] : [] },
+    });
+    logTo({ content: t('tkCrashLog', { user: `${member.user.tag}`, nick: u.name, ch: `${ch}` }), allowedMentions: { parse: [] } });
+    return { url: `https://discord.com/channels/${g.id}/${ch.id}` };
+  });
+
+  // ---------------- /gruz invite: link do party ----------------
+  async function cmdInvite(i) {
+    const u = db.users[linkedUuid(i.user.id)];
+    if (!u) return reply(i, t('linkNone'));
+    if (!ctx.online.has(u.uuid)) return reply(i, t('pinvOffline'));
+    const link = ctx.partyLink(u.uuid);
+    const msg = (i.options.getString('message') || '').replace(/[\r\n]+/g, ' ').trim();
+    const p = ctx.presenceOf(u.uuid);
+    const e = new EmbedBuilder().setColor(COLOR).setAuthor({ name: t('pinvTitle', { nick: u.name }), iconURL: `https://mc-heads.net/avatar/${u.uuid}/64` })
+      .setDescription([msg ? `> ${msg.replace(/[*_`~|>]/g, '')}` : '', t('pinvText', { t: ts(link.expires) }), p.online ? `🟢 ${where(p)}` : ''].filter(Boolean).join('\n\n'))
+      .setFooter({ text: t('pinvFoot', { lv: ctx.levelOf(u).level }) });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('🎮').setLabel(t('pinvJoin')).setURL(link.url),
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('⬇️').setLabel(t('evBtnDownload')).setURL(DOWNLOAD));
+    return i.reply({ embeds: [e], components: [row], allowedMentions: { parse: [] } });
+  }
+
+  // ---------------- role za poziom ----------------
+  const levelRoles = () => (cfg().levelRoles || []).slice().sort((a, b) => a.level - b.level);
+  const discordOf = (uuid) => Object.entries(cfg().links || {}).find(([, uid]) => uid === uuid)?.[0] || null;
+  /** Daje graczowi rolę za jego poziom (najwyższą pasującą; niższe zdejmuje, chyba że włączone "zostaw niższe") */
+  async function applyLevelRole(uuid) {
+    const list = levelRoles();
+    const did = discordOf(uuid);
+    const u = db.users[uuid];
+    if (!list.length || !did || !u) return false;
+    const g = await guild().catch(() => null);
+    if (!g) return false;
+    const member = await g.members.fetch(did).catch(() => null);
+    if (!member) return false;
+    const lv = ctx.levelOf(u).level;
+    const reached = list.filter((x) => x.level <= lv);
+    const want = new Set(cfg().levelStack ? reached.map((x) => x.roleId) : reached.slice(-1).map((x) => x.roleId));
+    let changed = false;
+    for (const x of list) {
+      const has = member.roles.cache.has(x.roleId);
+      try {
+        if (want.has(x.roleId) && !has) { await member.roles.add(x.roleId, `Gruz level ${lv}`); changed = true; }
+        if (!want.has(x.roleId) && has) { await member.roles.remove(x.roleId, `Gruz level ${lv}`); changed = true; }
+      } catch (e) { console.error('[discord] rola za poziom:', e.message); }
+    }
+    return changed;
+  }
+  ctx.onLevel?.((u, lv, before) => {
+    applyLevelRole(u.uuid).then((changed) => {
+      if (changed && lv > before) logTo({ content: t('lvLog', { nick: u.name, n: lv }), allowedMentions: { parse: [] } });
+    }).catch(() => {});
+  });
+  let syncing = false;
+  async function syncLevelRoles() {
+    if (syncing || !levelRoles().length) return 0;
+    syncing = true;
+    let n = 0;
+    try {
+      for (const uuid of Object.values(cfg().links || {})) {
+        if (await applyLevelRole(uuid).catch(() => false)) n++;
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    } finally { syncing = false; }
+    return n;
+  }
+  async function cmdLevels(i, sub) {
+    const c = cfg();
+    c.levelRoles ||= [];
+    if (sub === 'set') {
+      const level = i.options.getInteger('level', true), role = i.options.getRole('role', true);
+      const me = i.guild.members.me;
+      if (!me.permissions.has(P.ManageRoles)) return reply(i, t('noPerm', { perm: 'Manage Roles' }));
+      if (role.position >= me.roles.highest.position || role.managed) return reply(i, t('vfRoleHigh', { r: `${role}` }));
+      c.levelRoles = [...c.levelRoles.filter((x) => x.level !== level && x.roleId !== role.id), { level, roleId: role.id }].slice(0, 20);
+      save();
+      syncLevelRoles().catch(() => {});
+      return reply(i, t('lvSet', { n: level, r: `${role}` }));
+    }
+    if (sub === 'remove') {
+      const level = i.options.getInteger('level', true);
+      c.levelRoles = c.levelRoles.filter((x) => x.level !== level);
+      save();
+      return reply(i, t('lvRemoved', { n: level }));
+    }
+    if (sub === 'sync') {
+      await i.deferReply({ ephemeral: true });
+      const n = await syncLevelRoles();
+      return i.editReply(t('lvSynced', { n }));
+    }
+    return reply(i, t('lvList', { list: levelRoles().map((x) => t('lvLine', { n: x.level, r: `<@&${x.roleId}>` })).join('\n') || t('none') }));
+  }
+
+  // ---------------- ranking tygodniowy ----------------
+  function weeklyEmbed(rows, { title, week, cosmetic, places } = {}) {
+    const medal = ['🥇', '🥈', '🥉'];
+    const e = new EmbedBuilder().setColor(COLOR).setTitle(title || t('wkTitle', { w: week || ctx.weekKey() }))
+      .setDescription(rows.length ? rows.map((r, k) => `${medal[k] || `**${k + 1}.**`} ${r.name.replace(/[*_`~]/g, '\\$&')} · **${r.xp} XP**`).join('\n') : t('wkEmpty'))
+      .setThumbnail('attachment://logo.png').setTimestamp(new Date());
+    if (cosmetic && places) e.addFields({ name: t('wkReward'), value: t('wkRewardText', { n: places, c: cosmeticLabel(cosmetic) }) });
+    e.setFooter({ text: t('wkFoot') });
+    return e;
+  }
+  async function postWeekly(res) {
+    const chId = cfg().channels.ranking;
+    if (!chId) return;
+    try {
+      const ch = await client.channels.fetch(chId);
+      const mentions = [];
+      const lines = res.top.map((r) => { const did = discordOf(r.uuid); if (did && mentions.length < 3) mentions.push(did); return r; });
+      const reward = db.promo?.weeklyReward || {};
+      const e = weeklyEmbed(lines, { title: t('wkDoneTitle', { w: res.week }), cosmetic: res.cosmetic, places: res.rewarded?.length ? reward.places : 0 });
+      const winners = mentions.length ? t('wkCongrats', { users: mentions.map((x) => `<@${x}>`).join(' ') }) : undefined;
+      await ch.send({ content: winners, embeds: [e], files: [logoFile()], allowedMentions: { users: mentions } });
+    } catch (e) { console.error('[discord] ranking:', e.message); }
+  }
+  ctx.onWeekly?.((res) => { postWeekly(res); });
 
 
   // ---------------- partnerzy i twórcy ----------------
@@ -1179,7 +1363,8 @@ module.exports = function startDiscord(ctx) {
         online: !!client.user, tag: client.user?.tag || null, guild: g ? { id: g.id, name: g.name, members: g.memberCount } : null,
         channels, roles, cosmetics: ctx.LOCKED,
         config: { lang: c.lang, channels: c.channels, memberRole: c.memberRole || '', partnerRoles: c.partnerRoles || [], staffRole: c.tickets.staffRole || '',
-          verifyRole: c.verify.roleId || '', verifyMinAge: c.verify.minAge || 0, ticketCategories: c.tickets.categories },
+          verifyRole: c.verify.roleId || '', verifyMinAge: c.verify.minAge || 0, ticketCategories: c.tickets.categories,
+          levelRoles: levelRoles(), levelStack: !!c.levelStack },
         events: Object.values(c.events || {}).sort((a, b) => a.at - b.at).map((e) => ({ id: e.id, title: e.title, at: e.at, server: e.server, going: e.going.length, channel: chName(e.channelId) })),
         giveaways: Object.entries(c.giveaways).filter(([, g2]) => !g2.ended).map(([id, g2]) => ({ id, cosmetic: g2.cosmetic, endsAt: g2.endsAt, entrants: g2.entrants.length, channel: chName(g2.channelId) })),
       };
@@ -1188,18 +1373,33 @@ module.exports = function startDiscord(ctx) {
       const c = cfg();
       if (b.lang === 'en' || b.lang === 'pl') c.lang = b.lang;
       if (b.channels && typeof b.channels === 'object') {
-        for (const k of ['status', 'updates', 'logs', 'crashes']) if (k in b.channels) c.channels[k] = String(b.channels[k] || '') || undefined;
+        for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking']) if (k in b.channels) c.channels[k] = String(b.channels[k] || '') || undefined;
         statusMsg = null;
       }
       if ('memberRole' in b) c.memberRole = String(b.memberRole || '') || undefined;
       if (Array.isArray(b.partnerRoles)) c.partnerRoles = b.partnerRoles.map(String).slice(0, 10);
       if ('staffRole' in b) c.tickets.staffRole = String(b.staffRole || '') || undefined;
+      if ('levelStack' in b) c.levelStack = !!b.levelStack;
+      if (Array.isArray(b.levelRoles)) {
+        const seen = new Set();
+        c.levelRoles = b.levelRoles.map((x) => ({ level: Math.max(1, Math.min(200, Math.round(Number(x.level) || 0))), roleId: String(x.roleId || '') }))
+          .filter((x) => x.level && /^\d{5,25}$/.test(x.roleId) && !seen.has(x.level) && seen.add(x.level)).slice(0, 20);
+        syncLevelRoles().catch(() => {});
+      }
       save();
       updateStatus();
       if (b.channels?.updates) releaseTick();
       return { ok: true };
     },
     createEvent: async (b) => ({ ok: true, id: (await eventFromPanel(b)).id }),
+    async syncLevels() { return { ok: true, changed: await syncLevelRoles() }; },
+    async postRanking() {
+      const chId = cfg().channels.ranking;
+      if (!chId) throw new Error('Najpierw wybierz kanał rankingu i zapisz ustawienia.');
+      const ch = await client.channels.fetch(chId);
+      const msg = await ch.send({ embeds: [weeklyEmbed(ctx.weeklyTop(10), { cosmetic: db.promo?.weeklyReward?.cosmetic, places: db.promo?.weeklyReward?.places })], files: [logoFile()] });
+      return { ok: true, url: msg.url };
+    },
     async releaseNow() {
       const r = await releaseTick(true);
       if (!r.ok) throw new Error(r.error);
@@ -1305,6 +1505,9 @@ module.exports = function startDiscord(ctx) {
         if (i.commandName === 'gruz') {
           const sub = i.options.getSubcommand();
           if (sub === 'online') return i.reply({ embeds: [onlineEmbed()] });
+          if (sub === 'top' && i.options.getString('period') === 'week') {
+            return i.reply({ embeds: [weeklyEmbed(ctx.weeklyTop(10), { cosmetic: db.promo?.weeklyReward?.cosmetic, places: db.promo?.weeklyReward?.places })], files: [logoFile()] });
+          }
           if (sub === 'top') {
             const top = Object.values(db.users).sort((a, b) => (b.stats?.totalMs || 0) - (a.stats?.totalMs || 0)).slice(0, 10);
             const medal = ['🥇', '🥈', '🥉'];
@@ -1326,6 +1529,7 @@ module.exports = function startDiscord(ctx) {
             return i.reply({ embeds: [profileEmbed(u)] });
           }
           if (sub === 'servers') return cmdServers(i);
+          if (sub === 'invite') { if (slow(i, 15_000)) return reply(i, '⏳'); return cmdInvite(i); }
           if (slow(i)) return reply(i, '⏳');
           if (sub === 'skin') return cmdSkin(i);
           if (sub === 'server') return cmdServer(i);
@@ -1345,6 +1549,10 @@ module.exports = function startDiscord(ctx) {
           if (group === 'config') return cmdConfig(i, sub);
           if (group === 'event') return cmdEvent(i, sub);
           if (group === 'invites') return cmdInvitesAdmin(i, sub);
+          if (group === 'levels') return cmdLevels(i, sub);
+          if (sub === 'ranking') {
+            return i.reply({ embeds: [weeklyEmbed(ctx.weeklyTop(10), { cosmetic: db.promo?.weeklyReward?.cosmetic, places: db.promo?.weeklyReward?.places })], files: [logoFile()] });
+          }
           if (sub === 'code') return cmdCode(i);
           if (sub === 'wipe') return cmdWipe(i);
           if (sub === 'release') {
@@ -1411,6 +1619,8 @@ module.exports = function startDiscord(ctx) {
     releaseTick();
     setInterval(releaseTick, 5 * 60_000);
     setInterval(() => eventTick().catch((e) => console.error('[discord] event tick:', e.message)), 30_000);
+    setTimeout(() => syncLevelRoles().catch(() => {}), 60_000);
+    setInterval(() => syncLevelRoles().catch(() => {}), 6 * 36e5);
   });
 
   client.login(token).catch((e) => console.error('[discord] logowanie nieudane:', e.message));
