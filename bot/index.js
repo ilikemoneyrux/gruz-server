@@ -32,7 +32,10 @@ const cosmeticOpt = (o) => o.setName('cosmetic').setDescription('Cosmetic').setR
 const publicCmd = new SlashCommandBuilder()
   .setName('gruz').setDescription('Gruz Client')
   .addSubcommand((s) => s.setName('player').setDescription('Gruz Client player profile')
-    .addStringOption((o) => o.setName('nick').setDescription('Minecraft nickname').setRequired(true)))
+    .addStringOption((o) => o.setName('nick').setDescription('Minecraft nickname (empty = your linked account)')))
+  .addSubcommand((s) => s.setName('link').setDescription('Link your Minecraft account (code from the Gruz launcher)')
+    .addStringOption((o) => o.setName('code').setDescription('6-character code from Launcher → Friends → Link Discord').setRequired(true).setMinLength(6).setMaxLength(6)))
+  .addSubcommand((s) => s.setName('unlink').setDescription('Unlink your Minecraft account'))
   .addSubcommand((s) => s.setName('online').setDescription('Who is playing Gruz Client right now'))
   .addSubcommand((s) => s.setName('top').setDescription('Most hours on Gruz Client'))
   .addSubcommand((s) => s.setName('skin').setDescription('Skin preview with the Gruz cape')
@@ -88,7 +91,11 @@ const adminCmd = new SlashCommandBuilder()
     .addSubcommand((s) => s.setName('updates-channel').setDescription('Channel for new version announcements')
       .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
     .addSubcommand((s) => s.setName('logs-channel').setDescription('Channel for ticket transcripts and verification logs')
-      .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText))))
+      .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand((s) => s.setName('crashes-channel').setDescription('Channel for crash reports sent from the launcher (staff only!)')
+      .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText)))
+    .addSubcommand((s) => s.setName('member-role').setDescription('Role given after linking a Minecraft account (e.g. Gruz Member)')
+      .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true))))
   .addSubcommand((s) => s.setName('wipe').setDescription('Delete every channel except the bot channels'));
 
 
@@ -757,8 +764,17 @@ module.exports = function startDiscord(ctx) {
       save();
       return reply(i, t('cfgLang'));
     }
+    if (sub === 'member-role') {
+      const role = i.options.getRole('role', true);
+      const me = i.guild.members.me;
+      if (!me.permissions.has(P.ManageRoles)) return reply(i, t('noPerm', { perm: 'Manage Roles' }));
+      if (role.position >= me.roles.highest.position || role.managed) return reply(i, t('vfRoleHigh', { r: `${role}` }));
+      c.memberRole = role.id;
+      save();
+      return reply(i, t('cfgMemberRole', { r: `${role}` }));
+    }
     const ch = i.options.getChannel('channel', true);
-    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs' }[sub];
+    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs', 'crashes-channel': 'crashes' }[sub];
     c.channels[key] = ch.id;
     if (key === 'status') statusMsg = null;
     if (key === 'updates') c.lastRelease = c.lastRelease || null;
@@ -767,6 +783,66 @@ module.exports = function startDiscord(ctx) {
     if (key === 'updates') releaseTick();
     return reply(i, t('cfgChannel', { what: t('cfg.' + key), ch: `${ch}` }));
   }
+
+  // ---------------- łączenie konta Minecraft ----------------
+  const linkedUuid = (discordId) => cfg().links?.[discordId] || null;
+
+  async function cmdLink(i) {
+    const code = i.options.getString('code', true).trim().toUpperCase();
+    const uuid = ctx.consumeLinkCode(code);
+    const u = uuid && db.users[uuid];
+    if (!u) return reply(i, t('linkBad'));
+    const c = cfg();
+    c.links ||= {};
+    // jedno konto Minecraft = jedno konto Discord
+    for (const [did, uid] of Object.entries(c.links)) if (uid === uuid && did !== i.user.id) delete c.links[did];
+    c.links[i.user.id] = uuid;
+    u.discord = { id: i.user.id, tag: i.user.tag, at: Date.now() };
+    save();
+    ctx.pushMe?.(uuid);
+    let roleNote = '';
+    if (c.memberRole && i.inGuild()) {
+      try { await i.member.roles.add(c.memberRole, 'Gruz account linked'); roleNote = t('linkRole', { r: `<@&${c.memberRole}>` }); }
+      catch { roleNote = t('vfRoleHigh', { r: `<@&${c.memberRole}>` }); }
+    }
+    logTo({ content: t('linkLog', { user: `${i.user} (${i.user.tag})`, nick: u.name }), allowedMentions: { parse: [] } });
+    return i.reply({ embeds: [profileEmbed(u).setAuthor({ name: t('linkOk', { nick: u.name }) })], content: roleNote || undefined, ephemeral: true });
+  }
+
+  async function cmdUnlink(i) {
+    const c = cfg();
+    const uuid = linkedUuid(i.user.id);
+    if (!uuid) return reply(i, t('linkNone'));
+    delete c.links[i.user.id];
+    if (db.users[uuid]) { delete db.users[uuid].discord; ctx.pushMe?.(uuid); }
+    save();
+    if (c.memberRole && i.inGuild()) i.member.roles.remove(c.memberRole, 'Gruz account unlinked').catch(() => {});
+    return reply(i, t('unlinkOk'));
+  }
+
+  // ---------------- raporty crashy z launchera ----------------
+  ctx.onCrash?.(async (r) => {
+    const chId = cfg().channels.crashes;
+    if (!chId) return;
+    try {
+      const ch = await client.channels.fetch(chId);
+      const discordId = Object.entries(cfg().links || {}).find(([, uid]) => uid === r.uuid)?.[0];
+      const e = new EmbedBuilder().setColor(RED).setTitle(`💥 ${r.title || 'Crash'}`.slice(0, 250))
+        .setThumbnail(`https://mc-heads.net/avatar/${r.uuid}/64`)
+        .addFields(
+          { name: 'Player', value: `\`${r.name}\`${discordId ? ` · <@${discordId}>` : ''}`, inline: true },
+          { name: 'Minecraft', value: `${r.mc || '?'} ${r.loader || ''}`.trim(), inline: true },
+          { name: 'Gruz', value: `launcher ${r.launcher || '?'} · mod ${r.mod || '-'}`, inline: true },
+          { name: 'Type', value: r.kind || '?', inline: true },
+          ...(r.mods.length ? [{ name: 'Suspected mods', value: r.mods.join(', ').slice(0, 1000) }] : []),
+          ...(r.note ? [{ name: 'Player note', value: r.note.slice(0, 1000) }] : []),
+          ...(r.excerpt ? [{ name: 'Excerpt', value: '```' + r.excerpt.replace(/```/g, '').slice(0, 900) + '```' }] : []),
+        ).setFooter({ text: `report ${r.id}` }).setTimestamp(new Date(r.at));
+      if (r.text) e.setDescription(r.text.slice(0, 1000));
+      const files = r.log ? [new AttachmentBuilder(Buffer.from(r.log, 'utf8'), { name: `crash-${r.id}.log` })] : [];
+      await ch.send({ embeds: [e], files, allowedMentions: { parse: [] } });
+    } catch (e) { console.error('[discord] crash:', e.message); }
+  });
 
   // ---------------- router ----------------
   client.on('interactionCreate', async (i) => {
@@ -795,8 +871,15 @@ module.exports = function startDiscord(ctx) {
             return i.reply({ embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('topTitle'))
               .setDescription(top.map((u, k) => `${medal[k] || `**${k + 1}.**`} ${u.name} · ${hoursText(u.stats?.totalMs)} · ${t('level', { n: ctx.levelOf(u).level })}`).join('\n') || t('noData'))] });
           }
+          if (sub === 'link') return cmdLink(i);
+          if (sub === 'unlink') return cmdUnlink(i);
           if (sub === 'player') {
-            const nick = i.options.getString('nick', true).trim();
+            const nick = (i.options.getString('nick') || '').trim();
+            if (!nick) {
+              const own = db.users[linkedUuid(i.user.id)];
+              if (!own) return reply(i, t('linkNone'));
+              return i.reply({ embeds: [profileEmbed(own)] });
+            }
             const u = findUser(nick);
             if (!u) return reply(i, t('noPlayer', { nick: nick.replace(/[*_`~]/g, '').slice(0, 20) }));
             return i.reply({ embeds: [profileEmbed(u)] });
