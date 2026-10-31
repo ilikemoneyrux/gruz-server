@@ -238,6 +238,7 @@ async function route(req, res, url, ctx) {
       if (p === '/admin/api/bot' && req.method === 'GET') return json(res, 200, await bot.info());
       const b = req.method === 'POST' ? await readBody(req) : {};
       if (p === '/admin/api/bot/config' && req.method === 'POST') return json(res, 200, await bot.setConfig(b));
+      if (p === '/admin/api/bot/release' && req.method === 'POST') return json(res, 200, await bot.releaseNow());
       if (p === '/admin/api/bot/event' && req.method === 'POST') return json(res, 200, await bot.createEvent(b));
       if (p.startsWith('/admin/api/bot/event/') && req.method === 'DELETE') return json(res, 200, await bot.cancelEvent(decodeURIComponent(p.slice('/admin/api/bot/event/'.length))));
       if (p === '/admin/api/bot/announce' && req.method === 'POST') return json(res, 200, await bot.announce(b));

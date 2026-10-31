@@ -234,6 +234,7 @@
           <label class="blk">Rola ekipy (widzi tickety)<select id="b-staff" class="role-sel"></select></label>
           <label class="blk">Role partnerów / twórców (mogą używać /gruzpartner)</label><div class="checks" id="b-partners"></div>
           <div class="row" style="margin-top:12px"><button class="btn" id="b-save">Zapisz ustawienia</button><span class="ok-msg" id="b-save-ok"></span><span class="err" id="b-save-err"></span></div>
+          <div class="row" style="margin-top:10px"><button class="ghost" id="b-release">Ogłoś najnowszą wersję teraz</button><span class="ok-msg" id="b-rel-ok"></span><span class="err" id="b-rel-err"></span></div>
         </div>
         <div class="card">
           <h2>Ogłoszenie</h2>
@@ -606,6 +607,7 @@
     channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value },
     partnerRoles: [...document.querySelectorAll('#b-partners input:checked')].map((x) => x.value),
   } })));
+  $('#b-release').addEventListener('click', () => act('#b-rel-ok', '#b-rel-err', () => api('bot/release', { method: 'POST' })));
   $('#a-send').addEventListener('click', () => act('#a-ok', '#a-err', async () => {
     const r = await api('bot/announce', { method: 'POST', body: { channelId: $('#a-ch').value, ping: $('#a-ping').value, title: v('#a-title'), text: $('#a-text').value,
       image: v('#a-image'), color: $('#a-color').value, buttonLabel: v('#a-blabel'), buttonUrl: v('#a-burl') } });

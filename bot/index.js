@@ -119,6 +119,7 @@ const adminCmd = new SlashCommandBuilder()
       .addChannelOption((o) => o.setName('channel').setDescription('Where to post it (default: here)').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
     .addSubcommand((s) => s.setName('cancel').setDescription('Cancel an event')
       .addStringOption((o) => o.setName('message_id').setDescription('Event message ID').setRequired(true))))
+  .addSubcommand((s) => s.setName('release').setDescription('Announce the latest Gruz Client release in the updates channel now'))
   .addSubcommand((s) => s.setName('wipe').setDescription('Delete every channel except the bot channels'));
 
 const partnerCmd = new SlashCommandBuilder()
@@ -437,16 +438,22 @@ module.exports = function startDiscord(ctx) {
   }
 
   // ---------------- ogłoszenia nowych wersji ----------------
-  async function releaseTick() {
+  /** Sprawdza najnowszy release na GitHubie i ogłasza go. force = ogłoś nawet jeśli już był. Zwraca opis wyniku. */
+  async function releaseTick(force = false) {
     const chId = cfg().channels.updates;
-    if (!chId) return;
+    if (!chId) return { ok: false, error: 'Nie ustawiono kanału ogłoszeń nowych wersji.' };
     try {
-      const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, { headers: { 'user-agent': 'GruzClientBot', accept: 'application/vnd.github+json' } });
-      if (!r.ok) return;
+      const headers = { 'user-agent': 'GruzClientBot', accept: 'application/vnd.github+json' };
+      if (process.env.GITHUB_TOKEN) headers.authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
+      const r = await fetch(`https://api.github.com/repos/${RELEASES_REPO}/releases/latest`, { headers });
+      if (!r.ok) {
+        const msg = `GitHub ${r.status}${r.status === 403 || r.status === 429 ? ' – limit zapytań, ustaw GITHUB_TOKEN na Renderze' : r.status === 404 ? ' – brak opublikowanego release' : ''}`;
+        console.error('[discord] aktualizacje:', msg);
+        return { ok: false, error: msg };
+      }
       const rel = await r.json();
-      if (!rel.tag_name || rel.tag_name === cfg().lastRelease) return;
-      cfg().lastRelease = rel.tag_name;
-      save();
+      if (!rel.tag_name) return { ok: false, error: 'Brak release na GitHubie.' };
+      if (!force && rel.tag_name === cfg().lastRelease) return { ok: true, skipped: rel.tag_name };
       const exe = (rel.assets || []).find((a) => /\.exe$/i.test(a.name));
       const notes = String(rel.body || '').trim().replace(/\r/g, '').slice(0, 3500) || t('relNoNotes');
       const ch = await client.channels.fetch(chId);
@@ -456,7 +463,15 @@ module.exports = function startDiscord(ctx) {
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(t('relDownload')).setEmoji('⬇️').setURL(exe?.browser_download_url || rel.html_url));
       await ch.send({ embeds: [e], components: [row], files: [logoFile()] });
-    } catch (e) { console.error('[discord] aktualizacje:', e.message); }
+      // dopiero po udanym wysłaniu – inaczej przy błędzie (np. brak uprawnień) wersja przepadała
+      cfg().lastRelease = rel.tag_name;
+      save();
+      return { ok: true, posted: rel.tag_name };
+    } catch (e) {
+      const msg = e.code === 50013 || e.code === 50001 ? 'Bot nie ma uprawnień na kanale ogłoszeń (Wyświetl kanał, Wysyłaj wiadomości, Osadzaj linki, Załączaj pliki).' : e.message;
+      console.error('[discord] aktualizacje:', msg);
+      return { ok: false, error: msg };
+    }
   }
 
   // ---------------- tickety ----------------
@@ -1185,6 +1200,11 @@ module.exports = function startDiscord(ctx) {
       return { ok: true };
     },
     createEvent: async (b) => ({ ok: true, id: (await eventFromPanel(b)).id }),
+    async releaseNow() {
+      const r = await releaseTick(true);
+      if (!r.ok) throw new Error(r.error);
+      return { ok: true, url: 1, posted: r.posted };
+    },
     async cancelEvent(id) {
       const ev = cfg().events?.[id];
       if (!ev) throw new Error('Nie ma takiego eventu.');
@@ -1327,6 +1347,11 @@ module.exports = function startDiscord(ctx) {
           if (group === 'invites') return cmdInvitesAdmin(i, sub);
           if (sub === 'code') return cmdCode(i);
           if (sub === 'wipe') return cmdWipe(i);
+          if (sub === 'release') {
+            await i.deferReply({ ephemeral: true });
+            const r = await releaseTick(true);
+            return i.editReply(r.ok ? `✅ ${r.posted}` : `❌ ${r.error}`);
+          }
         }
         return;
       }
@@ -1384,7 +1409,7 @@ module.exports = function startDiscord(ctx) {
     setInterval(updateStatus, 60_000);
     setInterval(() => giveawayTick().catch((e) => console.error('[discord] giveaway tick:', e.message)), 10_000);
     releaseTick();
-    setInterval(releaseTick, 10 * 60_000);
+    setInterval(releaseTick, 5 * 60_000);
     setInterval(() => eventTick().catch((e) => console.error('[discord] event tick:', e.message)), 30_000);
   });
 
