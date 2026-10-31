@@ -157,6 +157,14 @@ async function route(req, res, url, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    if (p === '/admin/api/crashes') {
+      return json(res, 200, (db.crashes || []).slice(0, 100).map(({ log, ...r }) => ({ ...r, logSize: (log || '').length })));
+    }
+    if (p.startsWith('/admin/api/crashes/')) {
+      const r = (db.crashes || []).find((x) => x.id === decodeURIComponent(p.slice('/admin/api/crashes/'.length)));
+      if (!r) return json(res, 404, { error: 'Nie ma takiego raportu.' });
+      return json(res, 200, r);
+    }
     if (p === '/admin/api/news' && req.method === 'GET') return json(res, 200, db.news);
     if (p === '/admin/api/news' && req.method === 'POST') {
       const b = await readBody(req);

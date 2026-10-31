@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -23,9 +23,10 @@ const db = {
   news: [],    // [{ id, date, tag, title, body }] – publikowane w /news.json
   servers: {}, // "hypixel.net" -> { ms, players: [uuid], sessions, last } – topka serwerów
   discord: {}, // ustawienia bota Discord (język, kanały, tickety, giveawaye)
+  crashes: [], // raporty crashy wysłane z launchera (najnowsze na początku)
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
-  ['servers.json', 'servers'], ['discord.json', 'discord']];
+  ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -105,7 +106,8 @@ function updateBadges(uuid) {
   }
 }
 function meView(u) {
-  return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason() };
+  return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
+    discord: u.discord ? { tag: u.discord.tag } : null };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
@@ -256,6 +258,17 @@ setInterval(() => {
   if (serverSessions.size) save();
 }, 5 * 60_000);
 
+// ---------------- raporty crashy i łączenie Discorda ----------------
+const crashListeners = [];
+const linkCodes = new Map(); // KOD -> { uuid, exp }
+/** Zużywa kod z launchera; zwraca uuid gracza albo null */
+function consumeLinkCode(code) {
+  const k = String(code || '').trim().toUpperCase();
+  const v = linkCodes.get(k);
+  linkCodes.delete(k);
+  return v && v.exp > now() ? v.uuid : null;
+}
+
 // ---------------- obsługa wiadomości ----------------
 const handlers = {
   presence(c, m) {
@@ -318,6 +331,37 @@ const handlers = {
   },
 
   /** Kosmetyka sezonowa: za darmo, ale tylko w czasie wydarzenia */
+  /** Raport crasha z launchera (gracz kliknął "Wyślij raport") */
+  'crash.report'(c, m) {
+    const u = user(c.uuid);
+    if (!u) return;
+    if (now() - (u.lastCrashAt || 0) < 60_000) return c.send({ t: 'crash.result', ok: false, code: 'SLOW' });
+    u.lastCrashAt = now();
+    const str = (v, n) => String(v ?? '').slice(0, n);
+    const report = {
+      id: crypto.randomBytes(5).toString('hex'), uuid: u.uuid, name: u.name, at: now(),
+      launcher: str(m.launcher, 20), mc: str(m.mc, 20), loader: str(m.loader, 20), mod: str(m.mod, 20),
+      kind: str(m.kind, 30), title: str(m.title, 150), text: str(m.text, 600), note: str(m.note, 500),
+      mods: Array.isArray(m.mods) ? m.mods.slice(0, 10).map((x) => str(x, 80)) : [],
+      excerpt: str(m.excerpt, 4000), log: str(m.log, 60_000),
+    };
+    db.crashes.unshift(report);
+    db.crashes = db.crashes.slice(0, 300);
+    save();
+    c.send({ t: 'crash.result', ok: true, id: report.id });
+    for (const f of crashListeners) { try { f(report); } catch (e) { console.error('[crash]', e.message); } }
+  },
+
+  /** Kod do połączenia konta z Discordem (/gruz link KOD) – ważny 10 minut */
+  'link.code'(c) {
+    for (const [k, v] of linkCodes) if (v.uuid === c.uuid || v.exp < now()) linkCodes.delete(k);
+    const abc = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code;
+    do { code = ''; for (let i = 0; i < 6; i++) code += abc[crypto.randomInt(abc.length)]; } while (linkCodes.has(code));
+    linkCodes.set(code, { uuid: c.uuid, exp: now() + 10 * 60_000 });
+    c.send({ t: 'link.code', code, expires: now() + 10 * 60_000 });
+  },
+
   'season.claim'(c, m) {
     const key = String(m.key || '');
     const season = catalog.activeSeason();
@@ -516,6 +560,7 @@ const adminCtx = {
   updateBadges, pushMe,
 };
 
+
 const wss = new WebSocketServer({ server, maxPayload: 600 * 1024 }); // wiadomości głosowe do ~20 s
 
 wss.on('connection', (ws, req) => {
@@ -593,7 +638,8 @@ setInterval(() => {
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
-    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions,
+    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode,
+    onCrash: (f) => crashListeners.push(f),
     badgeName: (id) => { const b = BADGES.find((x) => x.id === id); return b && (db.discord?.lang === 'pl' ? b.pl : b.en || b.pl); },
   });
 })().catch((e) => { console.error('Nie udało się uruchomić serwera:', e); process.exit(1); });
