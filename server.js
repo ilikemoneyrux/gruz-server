@@ -24,7 +24,7 @@ const db = {
   servers: {}, // "hypixel.net" -> { ms, players: [uuid], sessions, last } – topka serwerów
   discord: {}, // ustawienia bota Discord (język, kanały, tickety, giveawaye)
   crashes: [], // raporty crashy wysłane z launchera (najnowsze na początku)
-  promo: { partners: [], ads: [], creatorReward: 'cape:nebula' }, // serwery partnerskie i reklamy w launcherze
+  promo: { partners: [], ads: [], creatorReward: 'cape:nebula' }, // serwery partnerskie, reklamy, nagrody za kody i zaproszenia
   creators: {}, // KOD -> { code, name, discordId, cosmetic, uses: [uuid], created } – kody twórców
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
@@ -109,19 +109,78 @@ function updateBadges(uuid) {
 }
 function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
-    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: u.referredBy ? db.creators[u.referredBy]?.name || u.referredBy : null };
+    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u) };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
+
+// ---------------- zaproszenia znajomych ----------------
+// Każdy gracz ma swój kod (domyślnie nick). Nowy gracz wpisuje go przy pierwszym uruchomieniu,
+// a zapraszający dostaje nagrody za progi ustawione komendą /gruzadmin invites albo w panelu.
+const DEFAULT_TIERS = [{ count: 3, cosmetic: 'cape:sakura' }, { count: 10, cosmetic: 'wings:crystal' }];
+const tiers = () => (Array.isArray(db.promo?.inviteTiers) ? db.promo.inviteTiers : DEFAULT_TIERS).slice().sort((a, b) => a.count - b.count);
+function inviteCodeOf(u) {
+  if (u.inviteCode) return u.inviteCode;
+  const base = String(u.name || 'GRUZ').toUpperCase().replace(/[^A-Z0-9_]/g, '').slice(0, 16) || 'GRUZ';
+  let code = base;
+  const taken = (c) => db.creators?.[c] || db.codes?.[c] || Object.values(db.users).some((x) => x !== u && x.inviteCode === c);
+  while (taken(code)) code = base.slice(0, 13) + crypto.randomInt(100, 999);
+  u.inviteCode = code;
+  save();
+  return code;
+}
+const byInvite = (code) => Object.values(db.users).find((x) => x.inviteCode === code) || null;
+function referrerName(u) {
+  if (!u.referredBy) return null;
+  if (u.referredBy.startsWith('P:')) return user(u.referredBy.slice(2))?.name || null;
+  return db.creators[u.referredBy]?.name || u.referredBy;
+}
+function inviteView(u) {
+  const count = (u.invited || []).length;
+  const list = tiers();
+  return { code: inviteCodeOf(u), count, tiers: list, next: list.find((x) => x.count > count) || null, welcome: db.promo?.inviteWelcome || null };
+}
+/** Daje zapraszającemu nagrody za osiągnięte progi (też po zmianie progów przez admina) */
+function grantInviteRewards(u) {
+  const count = (u.invited || []).length;
+  let got = null;
+  for (const tr of tiers()) {
+    if (count >= tr.count && catalog.exists(tr.cosmetic) && !u.unlocked.includes(tr.cosmetic)) { u.unlocked.push(tr.cosmetic); got = tr.cosmetic; }
+  }
+  if (got) { save(); sendTo(u.uuid, { t: 'notify', kind: 'inviteReward', cosmetic: got, count }); }
+  return got;
+}
 
 // ---------------- kody twórców ----------------
 // Gracz może raz (do 14 dni od pierwszego logowania) podać kod twórcy – dostaje kosmetykę, a twórca +1 do licznika.
 const CREATOR_WINDOW = 14 * 864e5;
+const inviteListeners = [];
 const creatorKey = (s) => String(s || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
 function useCreator(uuid, raw) {
   const u = user(uuid);
   const code = creatorKey(raw);
   const cr = db.creators[code];
-  if (!u || !cr) return { error: 'CREATOR_INVALID' };
+  if (!u) return { error: 'CREATOR_INVALID' };
+  if (!cr) {
+    // kod znajomego
+    const inv = byInvite(code);
+    if (!inv) return { error: 'CREATOR_INVALID' };
+    if (u.referredBy) return { error: 'CREATOR_USED' };
+    if (inv.uuid === uuid) return { error: 'CREATOR_SELF' };
+    if (now() - (u.firstSeen || 0) > CREATOR_WINDOW) return { error: 'CREATOR_LATE' };
+    u.referredBy = 'P:' + inv.uuid;
+    inv.invited ||= [];
+    if (!inv.invited.includes(uuid)) inv.invited.push(uuid);
+    const welcome = db.promo?.inviteWelcome || null;
+    if (welcome && catalog.exists(welcome) && !u.unlocked.includes(welcome)) u.unlocked.push(welcome);
+    save();
+    sendTo(inv.uuid, { t: 'notify', kind: 'invited', name: u.name, count: inv.invited.length });
+    grantInviteRewards(inv);
+    pushMe(inv.uuid);
+    updateBadges(uuid);
+    pushMe(uuid);
+    for (const f of inviteListeners) { try { f({ inviter: inv, invitee: u }); } catch { /* ignore */ } }
+    return { ok: true, name: inv.name, cosmetic: welcome, kind: 'friend' };
+  }
   if (u.referredBy) return { error: 'CREATOR_USED' };
   if (now() - (u.firstSeen || 0) > CREATOR_WINDOW) return { error: 'CREATOR_LATE' };
   if (cr.discordId && u.discord?.id === cr.discordId) return { error: 'CREATOR_SELF' };
@@ -622,7 +681,8 @@ ${ok ? `<h1>Opening Gruz Client…</h1><p>Joining</p><code>${e(ip)}</code><br><a
 const adminCtx = {
   password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
-  updateBadges, pushMe, catalog,
+  updateBadges, pushMe, catalog, tiers, grantInviteRewards,
+  bot: null, // uzupełnia bot Discord (panel "Bot")
 };
 
 
@@ -659,6 +719,7 @@ wss.on('connection', (ws, req) => {
         c.name = who.name;
         ensureUser(who.uuid, who.name);
         updateBadges(who.uuid);
+        grantInviteRewards(user(who.uuid));
         if (!online.has(c.uuid)) online.set(c.uuid, new Set());
         online.get(c.uuid).add(c);
         c.send({ t: 'welcome', uuid: c.uuid, name: c.name, party: partyOf.has(c.uuid) ? partyView(parties.get(partyOf.get(c.uuid))) : null,
@@ -704,6 +765,7 @@ setInterval(() => {
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
     db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
+    tiers, grantInviteRewards, inviteCodeOf, onInvite: (f) => inviteListeners.push(f), registerAdmin: (api) => { adminCtx.bot = api; },
     onCrash: (f) => crashListeners.push(f),
     badgeName: (id) => { const b = BADGES.find((x) => x.id === id); return b && (db.discord?.lang === 'pl' ? b.pl : b.en || b.pl); },
   });

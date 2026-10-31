@@ -213,6 +213,40 @@ async function route(req, res, url, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    // ---------- zaproszenia znajomych ----------
+    if (p === '/admin/api/invites' && req.method === 'GET') {
+      const top = users.filter((u) => (u.invited || []).length).sort((a, b) => b.invited.length - a.invited.length).slice(0, 15)
+        .map((u) => ({ name: u.name, uuid: u.uuid, count: u.invited.length, code: u.inviteCode }));
+      return json(res, 200, { tiers: ctx.tiers(), welcome: db.promo.inviteWelcome || '', cosmetics: ctx.LOCKED.filter((k) => k !== 'all'), top,
+        total: users.filter((u) => u.referredBy?.startsWith('P:')).length });
+    }
+    if (p === '/admin/api/invites' && req.method === 'POST') {
+      const b = await readBody(req);
+      const list = (Array.isArray(b.tiers) ? b.tiers : []).map((x) => ({ count: Math.max(1, Math.min(1000, Math.round(Number(x.count) || 0))), cosmetic: String(x.cosmetic || '') }))
+        .filter((x) => x.count && ctx.catalog.exists(x.cosmetic)).slice(0, 12);
+      db.promo.inviteTiers = list.sort((a, c) => a.count - c.count);
+      if ('welcome' in b) db.promo.inviteWelcome = ctx.catalog.exists(b.welcome || '') ? b.welcome : '';
+      ctx.save();
+      for (const u of users) if ((u.invited || []).length) { ctx.grantInviteRewards(u); ctx.pushMe(u.uuid); }
+      return json(res, 200, { ok: true, tiers: db.promo.inviteTiers });
+    }
+
+    // ---------- bot Discord ----------
+    if (p.startsWith('/admin/api/bot')) {
+      const bot = ctx.bot;
+      if (!bot) return json(res, 200, { online: false, reason: 'Bot nie działa (brak DISCORD_TOKEN w zmiennych na Renderze).' });
+      if (p === '/admin/api/bot' && req.method === 'GET') return json(res, 200, await bot.info());
+      const b = req.method === 'POST' ? await readBody(req) : {};
+      if (p === '/admin/api/bot/config' && req.method === 'POST') return json(res, 200, await bot.setConfig(b));
+      if (p === '/admin/api/bot/event' && req.method === 'POST') return json(res, 200, await bot.createEvent(b));
+      if (p.startsWith('/admin/api/bot/event/') && req.method === 'DELETE') return json(res, 200, await bot.cancelEvent(decodeURIComponent(p.slice('/admin/api/bot/event/'.length))));
+      if (p === '/admin/api/bot/announce' && req.method === 'POST') return json(res, 200, await bot.announce(b));
+      if (p === '/admin/api/bot/panel' && req.method === 'POST') return json(res, 200, await bot.postPanel(b));
+      if (p === '/admin/api/bot/giveaway' && req.method === 'POST') return json(res, 200, await bot.giveaway(b));
+      if (p === '/admin/api/bot/ticket-category' && req.method === 'POST') return json(res, 200, await bot.ticketCategory(b));
+      return json(res, 404, { error: 'Nie znaleziono.' });
+    }
+
     // ---------- kody twórców ----------
     db.creators ||= {};
     if (p === '/admin/api/creators' && req.method === 'GET') {

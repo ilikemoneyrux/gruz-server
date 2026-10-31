@@ -42,7 +42,8 @@ const publicCmd = new SlashCommandBuilder()
     .addStringOption((o) => o.setName('nick').setDescription('Minecraft nickname').setRequired(true)))
   .addSubcommand((s) => s.setName('server').setDescription('Minecraft server status')
     .addStringOption((o) => o.setName('address').setDescription('e.g. hypixel.net').setRequired(true)))
-  .addSubcommand((s) => s.setName('servers').setDescription('Most played servers by Gruz Client players'));
+  .addSubcommand((s) => s.setName('servers').setDescription('Most played servers by Gruz Client players'))
+  .addSubcommand((s) => s.setName('invites').setDescription('Your invite code, invited friends and rewards'));
 
 const adminCmd = new SlashCommandBuilder()
   .setName('gruzadmin').setDescription('Gruz Client – admin tools')
@@ -98,6 +99,15 @@ const adminCmd = new SlashCommandBuilder()
       .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true)))
     .addSubcommand((s) => s.setName('partner-role').setDescription('Add/remove a role that can use /gruzpartner (e.g. Partner, Content Creator)')
       .addRoleOption((o) => o.setName('role').setDescription('Role (run again to remove)').setRequired(true))))
+  .addSubcommandGroup((g) => g.setName('invites').setDescription('Rewards for inviting friends')
+    .addSubcommand((s) => s.setName('set').setDescription('Add or change a reward: invite N friends -> get a cosmetic')
+      .addIntegerOption((o) => o.setName('count').setDescription('How many invited friends').setRequired(true).setMinValue(1).setMaxValue(1000))
+      .addStringOption(cosmeticOpt))
+    .addSubcommand((s) => s.setName('remove').setDescription('Remove a reward')
+      .addIntegerOption((o) => o.setName('count').setDescription('Reward for how many friends').setRequired(true).setMinValue(1).setMaxValue(1000)))
+    .addSubcommand((s) => s.setName('welcome').setDescription('Cosmetic for the NEW player who used a friend code (empty = none)')
+      .addStringOption((o) => o.setName('cosmetic').setDescription('Cosmetic').setAutocomplete(true)))
+    .addSubcommand((s) => s.setName('list').setDescription('Show invite rewards and top inviters')))
   .addSubcommandGroup((g) => g.setName('event').setDescription('Community events')
     .addSubcommand((s) => s.setName('create').setDescription('Announce an event with a reminder and a Join button')
       .addStringOption((o) => o.setName('title').setDescription('e.g. Bedwars tournament').setRequired(true).setMaxLength(80))
@@ -1011,11 +1021,18 @@ module.exports = function startDiscord(ctx) {
     const ev = { title: i.options.getString('title', true), desc: i.options.getString('description') || '', prize: i.options.getString('prize') || '',
       server, at, going: [], channelId: ch.id, by: i.user.id, reminded: at - Date.now() < 15 * 60_000, started: false };
     await i.deferReply({ ephemeral: true });
-    const msg = await ch.send({ content: ping ? `${ping}` : undefined, ...eventView(ev), files: [logoFile()], allowedMentions: { roles: ping ? [ping.id] : [] } });
+    const msg = await postEvent(ch, ev, ping?.id || null);
+    return i.editReply({ content: t('evCreated', { url: msg.url, t: ts(at, 'F') }) });
+  }
+  async function postEvent(ch, ev, pingRoleId) {
+    const c = cfg();
+    c.events ||= {};
+    Object.assign(ev, { going: ev.going || [], channelId: ch.id, reminded: ev.at - Date.now() < 15 * 60_000, started: false });
+    const msg = await ch.send({ content: pingRoleId ? `<@&${pingRoleId}>` : undefined, ...eventView(ev), files: [logoFile()], allowedMentions: { roles: pingRoleId ? [pingRoleId] : [] } });
     ev.id = msg.id;
     c.events[msg.id] = ev;
     save();
-    return i.editReply({ content: t('evCreated', { url: msg.url, t: ts(at, 'F') }) });
+    return msg;
   }
   async function btnEvent(i) {
     const ev = cfg().events?.[i.message.id];
@@ -1058,6 +1075,195 @@ module.exports = function startDiscord(ctx) {
     }
   }
 
+
+  // ---------------- zaproszenia znajomych ----------------
+  const tierLine = (tr) => t('invTier', { n: tr.count, c: cosmeticLabel(tr.cosmetic) });
+  function invitesTopText() {
+    const top = Object.values(db.users).filter((u) => (u.invited || []).length).sort((a, b) => b.invited.length - a.invited.length).slice(0, 10);
+    const medal = ['🥇', '🥈', '🥉'];
+    return top.map((u, k) => `${medal[k] || `**${k + 1}.**`} ${u.name} · ${t('invCount', { n: u.invited.length })}`).join('\n') || t('noData');
+  }
+  function setTiers(list) {
+    db.promo ||= {};
+    db.promo.inviteTiers = list.filter((x) => ctx.catalog.exists(x.cosmetic)).sort((a, b) => a.count - b.count).slice(0, 12);
+    save();
+    for (const u of Object.values(db.users)) if ((u.invited || []).length) { ctx.grantInviteRewards(u); ctx.pushMe(u.uuid); }
+  }
+  async function cmdInvitesAdmin(i, sub) {
+    const list = ctx.tiers();
+    if (sub === 'set') {
+      const count = i.options.getInteger('count', true), cosmetic = i.options.getString('cosmetic', true);
+      if (!ctx.catalog.exists(cosmetic)) return reply(i, t('unknownCosmetic'));
+      setTiers([...list.filter((x) => x.count !== count), { count, cosmetic }]);
+      return reply(i, t('invSet', { line: tierLine({ count, cosmetic }) }));
+    }
+    if (sub === 'remove') {
+      const count = i.options.getInteger('count', true);
+      setTiers(list.filter((x) => x.count !== count));
+      return reply(i, t('invRemoved', { n: count }));
+    }
+    if (sub === 'welcome') {
+      const c = i.options.getString('cosmetic') || '';
+      if (c && !ctx.catalog.exists(c)) return reply(i, t('unknownCosmetic'));
+      db.promo ||= {};
+      db.promo.inviteWelcome = c;
+      save();
+      return reply(i, c ? t('invWelcomeSet', { c: cosmeticLabel(c) }) : t('invWelcomeOff'));
+    }
+    return i.reply({ ephemeral: true, embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('invAdminTitle'))
+      .addFields(
+        { name: t('invRewards'), value: ctx.tiers().map(tierLine).join('\n') || t('none') },
+        { name: t('invWelcome'), value: db.promo?.inviteWelcome ? cosmeticLabel(db.promo.inviteWelcome) : t('none') },
+        { name: t('invTop'), value: invitesTopText() },
+      )] });
+  }
+  function cmdInvites(i) {
+    const u = db.users[linkedUuid(i.user.id)];
+    const e = new EmbedBuilder().setColor(COLOR).setTitle(t('invTitle'));
+    if (u) {
+      const count = (u.invited || []).length;
+      const next = ctx.tiers().find((x) => x.count > count);
+      e.setDescription(t('invYours', { code: ctx.inviteCodeOf(u), n: count })
+        + '\n' + (next ? t('invNext', { left: next.count - count, c: cosmeticLabel(next.cosmetic) }) : t('invAllDone')));
+    } else e.setDescription(t('invLinkFirst'));
+    e.addFields({ name: t('invRewards'), value: ctx.tiers().map(tierLine).join('\n') || t('none') }, { name: t('invTop'), value: invitesTopText() })
+      .setFooter({ text: t('invFoot') });
+    return i.reply({ embeds: [e], ephemeral: true });
+  }
+  ctx.onInvite?.(({ inviter, invitee }) => {
+    logTo({ content: t('invLog', { a: inviter.name, b: invitee.name, n: inviter.invited.length }), allowedMentions: { parse: [] } });
+  });
+
+  // ---------------- API dla panelu w przeglądarce ----------------
+  const guild = async () => (guildId ? client.guilds.fetch(guildId) : client.guilds.cache.first()) || null;
+  const chName = (id) => { const c = id && client.channels.cache.get(id); return c ? '#' + c.name : null; };
+  async function eventFromPanel(b) {
+    const at = Number(b.at) || parseWhen(b.when);
+    if (!at || at < Date.now() - 60_000 || at > Date.now() + 90 * 864e5) throw new Error('Zła data/godzina eventu.');
+    const server = String(b.server || '').trim().toLowerCase();
+    if (server && !/^[a-z0-9.-]+(:\d{1,5})?$/.test(server)) throw new Error('Zły adres serwera.');
+    if (!String(b.title || '').trim()) throw new Error('Podaj tytuł eventu.');
+    const ch = await client.channels.fetch(String(b.channelId || ''));
+    if (!ch?.isTextBased()) throw new Error('Wybierz kanał.');
+    return postEvent(ch, { title: String(b.title).slice(0, 80), desc: String(b.desc || '').slice(0, 1000), prize: String(b.prize || '').slice(0, 100), server, at, by: 'panel' }, b.pingRoleId || null);
+  }
+  ctx.registerAdmin?.({
+    async info() {
+      const g = await guild().catch(() => null);
+      const c = cfg();
+      let channels = [], roles = [];
+      if (g) {
+        const chs = await g.channels.fetch();
+        channels = [...chs.values()].filter((x) => x && (x.type === ChannelType.GuildText || x.type === ChannelType.GuildAnnouncement))
+          .sort((a, b) => a.rawPosition - b.rawPosition).map((x) => ({ id: x.id, name: x.name, parent: x.parent?.name || '' }));
+        const rs = await g.roles.fetch();
+        roles = [...rs.values()].filter((r) => r.id !== g.id && !r.managed).sort((a, b) => b.position - a.position)
+          .map((r) => ({ id: r.id, name: r.name, color: r.hexColor }));
+      }
+      return {
+        online: !!client.user, tag: client.user?.tag || null, guild: g ? { id: g.id, name: g.name, members: g.memberCount } : null,
+        channels, roles, cosmetics: ctx.LOCKED,
+        config: { lang: c.lang, channels: c.channels, memberRole: c.memberRole || '', partnerRoles: c.partnerRoles || [], staffRole: c.tickets.staffRole || '',
+          verifyRole: c.verify.roleId || '', verifyMinAge: c.verify.minAge || 0, ticketCategories: c.tickets.categories },
+        events: Object.values(c.events || {}).sort((a, b) => a.at - b.at).map((e) => ({ id: e.id, title: e.title, at: e.at, server: e.server, going: e.going.length, channel: chName(e.channelId) })),
+        giveaways: Object.entries(c.giveaways).filter(([, g2]) => !g2.ended).map(([id, g2]) => ({ id, cosmetic: g2.cosmetic, endsAt: g2.endsAt, entrants: g2.entrants.length, channel: chName(g2.channelId) })),
+      };
+    },
+    async setConfig(b) {
+      const c = cfg();
+      if (b.lang === 'en' || b.lang === 'pl') c.lang = b.lang;
+      if (b.channels && typeof b.channels === 'object') {
+        for (const k of ['status', 'updates', 'logs', 'crashes']) if (k in b.channels) c.channels[k] = String(b.channels[k] || '') || undefined;
+        statusMsg = null;
+      }
+      if ('memberRole' in b) c.memberRole = String(b.memberRole || '') || undefined;
+      if (Array.isArray(b.partnerRoles)) c.partnerRoles = b.partnerRoles.map(String).slice(0, 10);
+      if ('staffRole' in b) c.tickets.staffRole = String(b.staffRole || '') || undefined;
+      save();
+      updateStatus();
+      if (b.channels?.updates) releaseTick();
+      return { ok: true };
+    },
+    createEvent: async (b) => ({ ok: true, id: (await eventFromPanel(b)).id }),
+    async cancelEvent(id) {
+      const ev = cfg().events?.[id];
+      if (!ev) throw new Error('Nie ma takiego eventu.');
+      ev.cancelled = true;
+      try { const ch = await client.channels.fetch(ev.channelId); const msg = await ch.messages.fetch(id); await msg.edit(eventView(ev)); } catch { /* ignore */ }
+      delete cfg().events[id];
+      save();
+      return { ok: true };
+    },
+    async announce(b) {
+      const ch = await client.channels.fetch(String(b.channelId || '')).catch(() => null);
+      if (!ch?.isTextBased()) throw new Error('Wybierz kanał.');
+      if (!String(b.title || b.text || '').trim()) throw new Error('Wpisz tytuł albo treść.');
+      const color = /^#[0-9a-f]{6}$/i.test(b.color || '') ? parseInt(b.color.slice(1), 16) : COLOR;
+      const e = new EmbedBuilder().setColor(color).setThumbnail('attachment://logo.png');
+      if (b.title) e.setTitle(String(b.title).slice(0, 250));
+      if (b.text) e.setDescription(String(b.text).slice(0, 4000));
+      if (/^https:\/\//.test(b.image || '')) e.setImage(b.image);
+      if (/^https:\/\//.test(b.url || '')) e.setURL(b.url);
+      const ping = b.ping === 'everyone' ? '@everyone' : b.ping ? `<@&${b.ping}>` : undefined;
+      const rows = /^https:\/\//.test(b.buttonUrl || '') ? [new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel(String(b.buttonLabel || 'Open').slice(0, 80)).setURL(b.buttonUrl))] : [];
+      const msg = await ch.send({ content: ping, embeds: [e], components: rows, files: [logoFile()],
+        allowedMentions: b.ping === 'everyone' ? { parse: ['everyone'] } : { roles: b.ping ? [b.ping] : [] } });
+      return { ok: true, url: msg.url };
+    },
+    async postPanel(b) {
+      const ch = await client.channels.fetch(String(b.channelId || '')).catch(() => null);
+      if (!ch?.isTextBased()) throw new Error('Wybierz kanał.');
+      if (b.kind === 'tickets') {
+        const tk = cfg().tickets;
+        if (!tk.categories.length) throw new Error('Najpierw dodaj kategorie ticketów.');
+        const msg = await ch.send({ ...ticketPanel(b.title || '', b.text || ''), files: [logoFile()] });
+        tk.panels.push({ c: ch.id, m: msg.id, title: b.title || '', text: b.text || '' });
+        save();
+        return { ok: true, url: msg.url };
+      }
+      if (b.kind === 'verify') {
+        const g = ch.guild;
+        const role = b.roleId && await g.roles.fetch(b.roleId).catch(() => null);
+        if (!role) throw new Error('Wybierz rolę dla zweryfikowanych.');
+        if (role.position >= g.members.me.roles.highest.position) throw new Error(`Rola bota musi być wyżej niż ${role.name}.`);
+        const v = cfg().verify;
+        v.roleId = role.id;
+        v.minAge = Math.max(0, Math.min(365, Number(b.minAge) || 0));
+        save();
+        const e = new EmbedBuilder().setColor(COLOR).setTitle(t('vfTitle')).setDescription(t('vfText')).setThumbnail('attachment://logo.png');
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vf:start').setLabel(t('vfButton')).setEmoji('✅').setStyle(ButtonStyle.Success));
+        const msg = await ch.send({ embeds: [e], components: [row], files: [logoFile()] });
+        return { ok: true, url: msg.url };
+      }
+      throw new Error('Nieznany panel.');
+    },
+    async giveaway(b) {
+      if (!ctx.LOCKED.includes(b.cosmetic)) throw new Error('Wybierz kosmetykę.');
+      const ms = parseDuration(String(b.duration || ''));
+      if (!ms) throw new Error('Zły czas (np. 30m, 24h, 2d).');
+      const ch = await client.channels.fetch(String(b.channelId || '')).catch(() => null);
+      if (!ch?.isTextBased()) throw new Error('Wybierz kanał.');
+      const g = { channelId: ch.id, cosmetic: b.cosmetic, count: Math.max(1, Math.min(20, Number(b.winners) || 1)), endsAt: Date.now() + ms, host: client.user.id, entrants: [], winners: [], codes: {}, ended: false };
+      const msg = await ch.send({ embeds: [gwEmbed(g)], components: gwComponents(g), files: [logoFile()] });
+      cfg().giveaways[msg.id] = g;
+      save();
+      return { ok: true, url: msg.url };
+    },
+    async ticketCategory(b) {
+      const tk = cfg().tickets;
+      if (b.remove) { tk.categories = tk.categories.filter((x) => x.id !== b.remove); save(); await refreshPanels(); return { ok: true }; }
+      const name = String(b.name || '').trim().slice(0, 40), description = String(b.description || '').trim().slice(0, 90);
+      if (!name || !description) throw new Error('Podaj nazwę i opis kategorii.');
+      if (tk.categories.length >= 25) throw new Error('Maksymalnie 25 kategorii.');
+      const id = slug(name);
+      if (tk.categories.some((c) => c.id === id)) throw new Error('Taka kategoria już jest.');
+      tk.categories.push({ id, name, description, emoji: parseEmoji(b.emoji || ''), question: String(b.question || '').trim().slice(0, 45) });
+      save();
+      await refreshPanels();
+      return { ok: true };
+    },
+  });
+
   // ---------------- router ----------------
   client.on('interactionCreate', async (i) => {
     try {
@@ -1086,6 +1292,7 @@ module.exports = function startDiscord(ctx) {
               .setDescription(top.map((u, k) => `${medal[k] || `**${k + 1}.**`} ${u.name} · ${hoursText(u.stats?.totalMs)} · ${t('level', { n: ctx.levelOf(u).level })}`).join('\n') || t('noData'))] });
           }
           if (sub === 'link') return cmdLink(i);
+          if (sub === 'invites') return cmdInvites(i);
           if (sub === 'unlink') return cmdUnlink(i);
           if (sub === 'player') {
             const nick = (i.options.getString('nick') || '').trim();
@@ -1117,6 +1324,7 @@ module.exports = function startDiscord(ctx) {
           if (group === 'verify') return cmdVerifyPanel(i);
           if (group === 'config') return cmdConfig(i, sub);
           if (group === 'event') return cmdEvent(i, sub);
+          if (group === 'invites') return cmdInvitesAdmin(i, sub);
           if (sub === 'code') return cmdCode(i);
           if (sub === 'wipe') return cmdWipe(i);
         }

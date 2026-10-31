@@ -61,6 +61,17 @@
   .three label { display: block; font-size: 12px; color: var(--mute); } .three input, .three select { width: 100%; }
   pre.log { max-height: 420px; overflow: auto; background: #000; padding: 12px; font-size: 12px; white-space: pre-wrap; }
   @media (max-width: 760px) { .three { grid-template-columns: 1fr; } }
+  .bot-head { display: flex; gap: 14px; align-items: center; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 10px var(--ok); }
+  .checks { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 4px; }
+  .checks label { display: flex; gap: 6px; align-items: center; font-size: 13px; color: var(--text); }
+  .tier { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .tier input { width: 90px; }
+  .ok-msg { color: var(--ok); min-height: 20px; margin: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .grid2 > .card { margin-bottom: 0; }
+  label.blk { display: block; font-size: 12px; color: var(--mute); margin-top: 8px; } label.blk input, label.blk select, label.blk textarea { width: 100%; margin-top: 3px; }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .two label, .one label { display: block; font-size: 12px; color: var(--mute); }
   .two input, .one input { width: 100%; }
@@ -95,6 +106,8 @@
       <button data-tab="news">Newsy</button>
       <button data-tab="promo">Partnerzy i reklamy</button>
       <button data-tab="creators">Twórcy</button>
+      <button data-tab="invites">Zaproszenia</button>
+      <button data-tab="bot">Bot Discord</button>
       <button data-tab="crashes">Crashe</button>
     </nav>
     <button class="ghost" id="logout">Wyloguj</button>
@@ -194,6 +207,86 @@
     <div class="card"><h2>Twórcy</h2><table><thead><tr><th>Kod</th><th>Twórca</th><th>Nagroda</th><th>Użycia</th><th>Discord</th><th></th></tr></thead><tbody id="creators"></tbody></table></div>
   </section>
 
+  <section data-panel="invites" hidden>
+    <div class="card">
+      <h2>Nagrody za zaproszenia</h2>
+      <p class="muted">Każdy gracz ma swój kod (domyślnie nick). Kiedy nowy gracz wpisze go przy pierwszym uruchomieniu, zapraszający dostaje +1. Za progi poniżej kosmetyka odblokowuje się sama. To samo ustawisz na Discordzie: <span class="code">/gruzadmin invites set</span>.</p>
+      <div id="tiers"></div>
+      <div class="row" style="margin-top:6px"><button class="ghost" id="tier-add">+ Dodaj próg</button></div>
+      <label class="blk" style="max-width:360px">Prezent dla NOWEGO gracza (za użycie kodu znajomego)<select id="inv-welcome"></select></label>
+      <div class="row" style="margin-top:12px"><button class="btn" id="inv-save">Zapisz</button><span class="ok-msg" id="inv-ok"></span><span class="err" id="inv-err"></span></div>
+    </div>
+    <div class="card"><h2>Najwięcej zaproszeń <span class="muted" id="inv-total"></span></h2><table><thead><tr><th>Gracz</th><th>Kod</th><th>Zaproszonych</th></tr></thead><tbody id="inv-top"></tbody></table></div>
+  </section>
+
+  <section data-panel="bot" hidden>
+    <div class="card bot-head" id="bot-head"></div>
+    <div id="bot-body">
+      <div class="grid2">
+        <div class="card">
+          <h2>Ustawienia</h2>
+          <label class="blk">Język bota<select id="b-lang"><option value="en">English</option><option value="pl">Polski</option></select></label>
+          <label class="blk">Kanał: lista grających na żywo<select id="b-ch-status" class="ch-sel"></select></label>
+          <label class="blk">Kanał: ogłoszenia nowych wersji<select id="b-ch-updates" class="ch-sel"></select></label>
+          <label class="blk">Kanał: logi (tickety, weryfikacja, zaproszenia)<select id="b-ch-logs" class="ch-sel"></select></label>
+          <label class="blk">Kanał: raporty crashy (tylko ekipa!)<select id="b-ch-crashes" class="ch-sel"></select></label>
+          <label class="blk">Rola po połączeniu konta (Gruz Member)<select id="b-member" class="role-sel"></select></label>
+          <label class="blk">Rola ekipy (widzi tickety)<select id="b-staff" class="role-sel"></select></label>
+          <label class="blk">Role partnerów / twórców (mogą używać /gruzpartner)</label><div class="checks" id="b-partners"></div>
+          <div class="row" style="margin-top:12px"><button class="btn" id="b-save">Zapisz ustawienia</button><span class="ok-msg" id="b-save-ok"></span><span class="err" id="b-save-err"></span></div>
+        </div>
+        <div class="card">
+          <h2>Ogłoszenie</h2>
+          <label class="blk">Kanał<select id="a-ch" class="ch-sel"></select></label>
+          <label class="blk">Oznacz<select id="a-ping"><option value="">nikogo</option><option value="everyone">@everyone</option></select></label>
+          <label class="blk">Tytuł<input id="a-title" maxlength="250" /></label>
+          <label class="blk">Treść (można **pogrubiać**, emoji, linki)<textarea id="a-text" maxlength="4000"></textarea></label>
+          <div class="two"><label class="blk">Obrazek (https://…)<input id="a-image" /></label><label class="blk">Kolor<input id="a-color" type="color" value="#b45cff" style="height:38px;padding:2px" /></label></div>
+          <div class="two"><label class="blk">Przycisk – napis<input id="a-blabel" placeholder="Pobierz" /></label><label class="blk">Przycisk – link (https://…)<input id="a-burl" /></label></div>
+          <div class="row" style="margin-top:12px"><button class="btn" id="a-send">Wyślij</button><span class="ok-msg" id="a-ok"></span><span class="err" id="a-err"></span></div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card">
+          <h2>Nowy event</h2>
+          <label class="blk">Tytuł<input id="e-title" maxlength="80" placeholder="Turniej Bedwars" /></label>
+          <div class="two"><label class="blk">Kiedy (Twój czas)<input id="e-at" type="datetime-local" /></label><label class="blk">Serwer (IP)<input id="e-server" placeholder="mc.hypixel.net" /></label></div>
+          <label class="blk">Nagroda<input id="e-prize" maxlength="100" placeholder="Peleryna Galaxy dla zwycięzcy" /></label>
+          <label class="blk">Opis<textarea id="e-desc" maxlength="1000"></textarea></label>
+          <div class="two"><label class="blk">Kanał<select id="e-ch" class="ch-sel"></select></label><label class="blk">Oznacz rolę<select id="e-ping" class="role-sel"></select></label></div>
+          <div class="row" style="margin-top:12px"><button class="btn" id="e-add">Ogłoś event</button><span class="ok-msg" id="e-ok"></span><span class="err" id="e-err"></span></div>
+          <h2 style="margin-top:18px">Nadchodzące</h2><div id="e-list"></div>
+        </div>
+        <div class="card">
+          <h2>Giveaway</h2>
+          <label class="blk">Nagroda<select id="g-cos"></select></label>
+          <div class="two"><label class="blk">Czas (np. 30m, 24h, 2d)<input id="g-dur" value="24h" /></label><label class="blk">Zwycięzców<input id="g-win" type="number" min="1" max="20" value="1" /></label></div>
+          <label class="blk">Kanał<select id="g-ch" class="ch-sel"></select></label>
+          <div class="row" style="margin-top:12px"><button class="btn" id="g-start">Start</button><span class="ok-msg" id="g-ok"></span><span class="err" id="g-err"></span></div>
+          <h2 style="margin-top:18px">Trwające</h2><div id="g-list"></div>
+        </div>
+      </div>
+      <div class="grid2" style="margin-top:16px">
+        <div class="card">
+          <h2>Tickety</h2>
+          <div id="tk-cats"></div>
+          <div class="three" style="margin-top:8px"><label>Nazwa<input id="tk-name" maxlength="40" placeholder="Bug report" /></label><label>Emoji<input id="tk-emoji" placeholder="🐛" /></label><label>Pytanie (≤45)<input id="tk-q" maxlength="45" placeholder="Describe the bug" /></label></div>
+          <label class="blk">Opis w menu (≤90)<input id="tk-desc" maxlength="90" /></label>
+          <div class="row" style="margin-top:8px"><button class="ghost" id="tk-add">+ Dodaj kategorię</button><span class="err" id="tk-err"></span></div>
+          <label class="blk" style="margin-top:14px">Wyślij panel ticketów na kanał<select id="tk-ch" class="ch-sel"></select></label>
+          <div class="row" style="margin-top:8px"><button class="btn" id="tk-post">Wyślij panel</button><span class="ok-msg" id="tk-ok"></span></div>
+        </div>
+        <div class="card">
+          <h2>Weryfikacja (captcha)</h2>
+          <label class="blk">Rola po weryfikacji<select id="v-role" class="role-sel"></select></label>
+          <label class="blk">Blokuj konta Discord młodsze niż (dni)<input id="v-age" type="number" min="0" max="365" value="0" /></label>
+          <label class="blk">Kanał<select id="v-ch" class="ch-sel"></select></label>
+          <div class="row" style="margin-top:12px"><button class="btn" id="v-post">Wyślij panel weryfikacji</button><span class="ok-msg" id="v-ok"></span><span class="err" id="v-err"></span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section data-panel="crashes" hidden>
     <div class="card"><h2>Raporty crashy</h2><table><thead><tr><th>Kiedy</th><th>Gracz</th><th>Wersja</th><th>Typ</th><th>Podejrzane mody</th><th></th></tr></thead><tbody id="crashes"></tbody></table></div>
     <div class="card" id="crash-detail" hidden><h2 id="crash-title"></h2><p class="muted" id="crash-note"></p><pre class="log" id="crash-log"></pre></div>
@@ -247,7 +340,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -444,6 +537,106 @@
     $('#crash-log').textContent = r.log || r.excerpt || '';
     $('#crash-detail').scrollIntoView({ behavior: 'smooth' });
   });
+
+  // ---------- zaproszenia ----------
+  let invCos = [];
+  const cosOpts = (sel, list, empty) => (empty ? `<option value="">${esc(empty)}</option>` : '') + list.map((c) => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
+  function tierRow(tr = { count: '', cosmetic: '' }) {
+    return `<div class="tier"><input type="number" min="1" max="1000" value="${esc(tr.count)}" placeholder="ilu" /> <span class="muted">znajomych →</span>
+      <select>${cosOpts(tr.cosmetic, invCos)}</select><button class="ghost danger" data-rm>×</button></div>`;
+  }
+  async function loadInvites() {
+    const r = await api('invites');
+    invCos = r.cosmetics;
+    $('#tiers').innerHTML = r.tiers.map(tierRow).join('') || '<p class="muted">Brak progów – dodaj pierwszy.</p>';
+    $('#inv-welcome').innerHTML = cosOpts(r.welcome, invCos, 'nic');
+    $('#inv-total').textContent = `· ${r.total} graczy przyszło z zaproszenia`;
+    $('#inv-top').innerHTML = r.top.map((u) => `<tr><td><img src="https://mc-heads.net/avatar/${esc(u.uuid)}/22" alt="">${esc(u.name)}</td><td class="code">${esc(u.code)}</td><td><b>${u.count}</b></td></tr>`).join('')
+      || '<tr><td colspan="3" class="muted">Nikt jeszcze nikogo nie zaprosił.</td></tr>';
+  }
+  $('#tier-add').addEventListener('click', () => { if (!$('#tiers .tier')) $('#tiers').innerHTML = ''; $('#tiers').insertAdjacentHTML('beforeend', tierRow()); });
+  $('#tiers').addEventListener('click', (e) => { if (e.target.dataset.rm !== undefined) e.target.closest('.tier').remove(); });
+  $('#inv-save').addEventListener('click', async () => {
+    $('#inv-ok').textContent = ''; $('#inv-err').textContent = '';
+    try {
+      const tiers = [...document.querySelectorAll('#tiers .tier')].map((d) => ({ count: d.querySelector('input').value, cosmetic: d.querySelector('select').value }));
+      await api('invites', { method: 'POST', body: { tiers, welcome: $('#inv-welcome').value } });
+      $('#inv-ok').textContent = 'Zapisano ✓';
+      loadInvites();
+    } catch (err) { $('#inv-err').textContent = err.message; }
+  });
+
+  // ---------- bot ----------
+  let bot = null;
+  const flash = (id, text) => { $(id).textContent = text; setTimeout(() => { $(id).textContent = ''; }, 4000); };
+  async function act(okId, errId, fn) {
+    $(errId).textContent = '';
+    try { const r = await fn(); flash(okId, r?.url ? 'Wysłano ✓' : 'Zapisano ✓'); await loadBot(); } catch (err) { $(errId).textContent = err.message; }
+  }
+  async function loadBot() {
+    bot = await api('bot');
+    if (!bot.online) {
+      $('#bot-head').innerHTML = `<span class="dot"></span><div><b>Bot offline</b><div class="muted">${esc(bot.reason || 'Bot się łączy albo nie ma tokena.')}</div></div>`;
+      $('#bot-body').hidden = true;
+      return;
+    }
+    $('#bot-body').hidden = false;
+    $('#bot-head').innerHTML = `<span class="dot on"></span><div><b>${esc(bot.tag)}</b><div class="muted">${bot.guild ? esc(bot.guild.name) + ' · ' + bot.guild.members + ' osób' : 'nie jest na żadnym serwerze'}</div></div>`;
+    const c = bot.config;
+    const chOpts = (sel) => '<option value="">— brak —</option>' + bot.channels.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>#${esc(x.name)}${x.parent ? ' · ' + esc(x.parent) : ''}</option>`).join('');
+    const roleOpts = (sel) => '<option value="">— brak —</option>' + bot.roles.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>@${esc(r.name)}</option>`).join('');
+    $('#b-lang').value = c.lang;
+    for (const k of ['status', 'updates', 'logs', 'crashes']) $('#b-ch-' + k).innerHTML = chOpts(c.channels[k]);
+    for (const id of ['#a-ch', '#e-ch', '#g-ch', '#tk-ch', '#v-ch']) { const keep = $(id).value; $(id).innerHTML = chOpts(keep); }
+    $('#b-member').innerHTML = roleOpts(c.memberRole);
+    $('#b-staff').innerHTML = roleOpts(c.staffRole);
+    $('#e-ping').innerHTML = roleOpts($('#e-ping').value);
+    $('#v-role').innerHTML = roleOpts(c.verifyRole);
+    $('#v-age').value = c.verifyMinAge;
+    $('#a-ping').innerHTML = '<option value="">nikogo</option><option value="everyone">@everyone</option>' + bot.roles.map((r) => `<option value="${r.id}">@${esc(r.name)}</option>`).join('');
+    $('#b-partners').innerHTML = bot.roles.map((r) => `<label><input type="checkbox" value="${r.id}" ${c.partnerRoles.includes(r.id) ? 'checked' : ''} />@${esc(r.name)}</label>`).join('');
+    $('#g-cos').innerHTML = cosOpts($('#g-cos').value, bot.cosmetics);
+    $('#tk-cats').innerHTML = c.ticketCategories.map((x) => `<div class="row" style="margin-bottom:4px"><span>${esc(x.emoji?.name || x.emoji || '')} <b>${esc(x.name)}</b></span><span class="muted" style="flex:1">${esc(x.description)}</span><button class="ghost danger" data-tkrm="${esc(x.id)}">Usuń</button></div>`).join('') || '<p class="muted">Brak kategorii.</p>';
+    const when = (ms) => new Date(ms).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' });
+    $('#e-list').innerHTML = bot.events.map((e) => `<div class="row" style="margin-bottom:4px"><b>${esc(e.title)}</b><span class="muted" style="flex:1">${when(e.at)} · ${esc(e.channel || '')} · chętnych: ${e.going}</span><button class="ghost danger" data-evrm="${esc(e.id)}">Odwołaj</button></div>`).join('') || '<p class="muted">Brak eventów.</p>';
+    $('#g-list').innerHTML = bot.giveaways.map((g) => `<div class="row" style="margin-bottom:4px"><b>${esc(g.cosmetic)}</b><span class="muted">do ${when(g.endsAt)} · ${esc(g.channel || '')} · ${g.entrants} osób</span></div>`).join('') || '<p class="muted">Brak.</p>';
+  }
+  $('#b-save').addEventListener('click', () => act('#b-save-ok', '#b-save-err', () => api('bot/config', { method: 'POST', body: {
+    lang: $('#b-lang').value, memberRole: $('#b-member').value, staffRole: $('#b-staff').value,
+    channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value },
+    partnerRoles: [...document.querySelectorAll('#b-partners input:checked')].map((x) => x.value),
+  } })));
+  $('#a-send').addEventListener('click', () => act('#a-ok', '#a-err', async () => {
+    const r = await api('bot/announce', { method: 'POST', body: { channelId: $('#a-ch').value, ping: $('#a-ping').value, title: v('#a-title'), text: $('#a-text').value,
+      image: v('#a-image'), color: $('#a-color').value, buttonLabel: v('#a-blabel'), buttonUrl: v('#a-burl') } });
+    ['#a-title', '#a-text', '#a-image', '#a-blabel', '#a-burl'].forEach((s) => { $(s).value = ''; });
+    return r;
+  }));
+  $('#e-add').addEventListener('click', () => act('#e-ok', '#e-err', async () => {
+    const at = $('#e-at').value ? new Date($('#e-at').value).getTime() : 0;
+    const r = await api('bot/event', { method: 'POST', body: { title: v('#e-title'), at, server: v('#e-server'), prize: v('#e-prize'), desc: $('#e-desc').value, channelId: $('#e-ch').value, pingRoleId: $('#e-ping').value } });
+    ['#e-title', '#e-server', '#e-prize', '#e-desc'].forEach((s) => { $(s).value = ''; });
+    return { url: 1, ...r };
+  }));
+  $('#e-list').addEventListener('click', async (e) => {
+    const id = e.target.dataset.evrm;
+    if (!id || !confirm('Odwołać ten event?')) return;
+    await api('bot/event/' + encodeURIComponent(id), { method: 'DELETE' });
+    loadBot();
+  });
+  $('#g-start').addEventListener('click', () => act('#g-ok', '#g-err', () => api('bot/giveaway', { method: 'POST', body: { cosmetic: $('#g-cos').value, duration: v('#g-dur'), winners: $('#g-win').value, channelId: $('#g-ch').value } })));
+  $('#tk-add').addEventListener('click', () => act('#tk-ok', '#tk-err', async () => {
+    await api('bot/ticket-category', { method: 'POST', body: { name: v('#tk-name'), emoji: v('#tk-emoji'), question: v('#tk-q'), description: v('#tk-desc') } });
+    ['#tk-name', '#tk-emoji', '#tk-q', '#tk-desc'].forEach((s) => { $(s).value = ''; });
+  }));
+  $('#tk-cats').addEventListener('click', async (e) => {
+    const id = e.target.dataset.tkrm;
+    if (!id || !confirm('Usunąć kategorię?')) return;
+    await api('bot/ticket-category', { method: 'POST', body: { remove: id } });
+    loadBot();
+  });
+  $('#tk-post').addEventListener('click', () => act('#tk-ok', '#tk-err', () => api('bot/panel', { method: 'POST', body: { kind: 'tickets', channelId: $('#tk-ch').value } })));
+  $('#v-post').addEventListener('click', () => act('#v-ok', '#v-err', () => api('bot/panel', { method: 'POST', body: { kind: 'verify', channelId: $('#v-ch').value, roleId: $('#v-role').value, minAge: $('#v-age').value } })));
 
   function start() { show('app'); loadStats().catch(() => {}); }
   if (!ENABLED) show('disabled');
