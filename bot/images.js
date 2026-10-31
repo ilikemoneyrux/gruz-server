@@ -290,4 +290,277 @@ async function skinCard(o) {
   return cv.toBuffer('image/png');
 }
 
-module.exports = { captcha, newCode, skinCard, mojangProfile, fetchBuf, HD_CAPES };
+
+// ---------------- banery dla partnerów / twórców ----------------
+const DL = 'github.com/ilikemoneyrux/gruz-client';
+
+function glow(ctx, x, y, r, a = 0.4, color = '180,92,255') {
+  const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+  g.addColorStop(0, `rgba(${color},${a})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g;
+  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
+/** Pełne tło banera (bez zaokrągleń): gradient, poświaty, siatka, kilka "odłamków" */
+function bannerBg(ctx, w, h) {
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, '#07050c');
+  g.addColorStop(0.55, '#120a1f');
+  g.addColorStop(1, '#1d0f33');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  glow(ctx, w * 0.82, h * 0.35, Math.max(w, h) * 0.55, 0.32);
+  glow(ctx, w * 0.05, h * 1.05, Math.max(w, h) * 0.45, 0.22, '92,140,255');
+  ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+  ctx.lineWidth = 1;
+  const step = Math.round(Math.max(w, h) / 40);
+  for (let x = 0; x < w; x += step) { ctx.beginPath(); ctx.moveTo(x + 0.5, 0); ctx.lineTo(x + 0.5, h); ctx.stroke(); }
+  for (let y = 0; y < h; y += step) { ctx.beginPath(); ctx.moveTo(0, y + 0.5); ctx.lineTo(w, y + 0.5); ctx.stroke(); }
+  // odłamki (romby) jak w launcherze
+  const shards = [[0.62, 0.12, 0.018], [0.93, 0.78, 0.026], [0.48, 0.88, 0.012], [0.08, 0.2, 0.014], [0.74, 0.62, 0.01]];
+  for (const [fx, fy, fs] of shards) {
+    const x = fx * w, y = fy * h, r = fs * Math.max(w, h);
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(0.6);
+    ctx.fillStyle = 'rgba(180,92,255,0.18)';
+    ctx.strokeStyle = 'rgba(220,170,255,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.fillRect(-r / 2, -r / 2, r, r);
+    ctx.strokeRect(-r / 2, -r / 2, r, r);
+    ctx.restore();
+  }
+}
+
+function fitFont(ctx, text, maxW, size, family) {
+  let s = size;
+  do { ctx.font = `${s}px ${family}`; s -= 2; } while (ctx.measureText(text).width > maxW && s > 10);
+  return s + 2;
+}
+
+/** Napis z gradientem akcentu i poświatą */
+function neonText(ctx, text, x, y, size, align = 'left') {
+  ctx.save();
+  ctx.font = `${size}px PoppinsBold`;
+  ctx.textAlign = align;
+  const w = ctx.measureText(text).width;
+  const x0 = align === 'center' ? x - w / 2 : align === 'right' ? x - w : x;
+  const g = ctx.createLinearGradient(x0, y - size, x0 + w, y);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(1, '#dcaaff');
+  ctx.shadowColor = 'rgba(180,92,255,0.8)';
+  ctx.shadowBlur = size * 0.45;
+  ctx.fillStyle = g;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+/** Ramka z kodem twórcy */
+function codeBox(ctx, x, y, w, h, code, sub) {
+  ctx.save();
+  const g = ctx.createLinearGradient(x, y, x + w, y + h);
+  g.addColorStop(0, 'rgba(180,92,255,0.28)');
+  g.addColorStop(1, 'rgba(92,60,255,0.12)');
+  ctx.fillStyle = g;
+  roundRect(ctx, x, y, w, h, h * 0.22);
+  ctx.fill();
+  ctx.setLineDash([h * 0.12, h * 0.08]);
+  ctx.strokeStyle = 'rgba(220,170,255,0.75)';
+  ctx.lineWidth = Math.max(2, h * 0.025);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  const pad = h * 0.28;
+  ctx.font = `${Math.round(h * 0.17)}px PoppinsSemi`;
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.fillText('USE CODE', x + pad, y + h * 0.3);
+  const size = fitFont(ctx, code, w - pad * 2, Math.round(h * 0.42), 'PoppinsBold');
+  neonText(ctx, code, x + pad, y + h * 0.68, size);
+  if (sub) {
+    ctx.textAlign = 'right';
+    ctx.font = `${Math.round(h * 0.15)}px PoppinsSemi`;
+    ctx.fillStyle = '#dcaaff';
+    ctx.fillText(sub, x + w - pad, y + h * 0.3);
+  }
+  ctx.restore();
+}
+
+/** Postać od tyłu z peleryną Gruz (albo sama peleryna, gdy nie znamy skina) */
+async function heroFigure(ctx, skin, slim, cx, top, s, cape = 'gruz') {
+  ctx.save();
+  ctx.translate(cx + 0, top + 32 * s);
+  ctx.scale(1, 0.2);
+  const fl = ctx.createRadialGradient(0, 0, 0, 0, 0, 16 * s);
+  fl.addColorStop(0, 'rgba(180,92,255,0.55)');
+  fl.addColorStop(1, 'rgba(180,92,255,0)');
+  ctx.fillStyle = fl;
+  ctx.fillRect(-16 * s, -16 * s, 32 * s, 32 * s);
+  ctx.restore();
+  ctx.imageSmoothingEnabled = false;
+  const x = cx - 8 * s;
+  if (skin) drawBody(ctx, skin, x, top, s, true, slim);
+  drawCape(ctx, await capeImage(cape), cape, x, top, s);
+  ctx.imageSmoothingEnabled = true;
+}
+
+async function logoAt(ctx, x, y, size) {
+  const l = await logo();
+  if (!l) return;
+  ctx.save();
+  ctx.shadowColor = 'rgba(180,92,255,0.7)';
+  ctx.shadowBlur = size * 0.35;
+  ctx.drawImage(l, x, y, size, size);
+  ctx.restore();
+}
+
+function chips(ctx, items, x, y, h, gap = 12) {
+  ctx.save();
+  ctx.font = `${Math.round(h * 0.42)}px PoppinsSemi`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  for (const it of items) {
+    const w = ctx.measureText(it).width + h * 0.9;
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    roundRect(ctx, x, y, w, h, h / 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(180,92,255,0.45)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = '#efe6ff';
+    ctx.fillText(it, x + h * 0.45, y + h / 2 + 1);
+    x += w + gap;
+  }
+  ctx.restore();
+}
+
+/**
+ * Zestaw gotowych reklam dla twórcy.
+ * @param o { nick, code, reward (np. "free Nebula cape"), skin(Buffer|null), slim }
+ * @returns [{ name, title, buffer }]
+ */
+async function partnerBanners(o) {
+  const skin = o.skin ? await loadImage(o.skin).catch(() => null) : null;
+  const code = String(o.code || o.nick).toUpperCase();
+  const reward = o.reward || 'free cape';
+  const out = [];
+
+  // 1) Nakładka na stream (przezroczyste tło)
+  {
+    const W = 1000, H = 190;
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext('2d');
+    ctx.save();
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, 'rgba(12,9,19,0.92)');
+    g.addColorStop(1, 'rgba(32,16,56,0.92)');
+    ctx.fillStyle = g;
+    roundRect(ctx, 6, 6, W - 12, H - 12, 34);
+    ctx.fill();
+    ctx.clip();
+    glow(ctx, W - 120, H / 2, 260, 0.35);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(180,92,255,0.8)';
+    ctx.lineWidth = 3;
+    roundRect(ctx, 6, 6, W - 12, H - 12, 34);
+    ctx.stroke();
+    await logoAt(ctx, 34, 37, 116);
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '22px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('NOW PLAYING ON', 176, 72);
+    neonText(ctx, 'GRUZ CLIENT', 174, 128, 54);
+    ctx.font = '22px PoppinsSemi';
+    ctx.fillStyle = '#dcaaff';
+    ctx.fillText(`code ${code} = ${reward}`, 176, 162);
+    ctx.save();
+    ctx.globalAlpha = 0.95;
+    await heroFigure(ctx, skin, o.slim, W - 110, 22, 4.6);
+    ctx.restore();
+    out.push({ name: 'gruz-stream-overlay.png', title: 'Stream overlay (transparent)', buffer: cv.toBuffer('image/png') });
+  }
+
+  // 2) Post kwadratowy (Instagram / TikTok / Discord)
+  {
+    const W = 1080, H = 1080;
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext('2d');
+    bannerBg(ctx, W, H);
+    await logoAt(ctx, 80, 80, 92);
+    ctx.font = '30px PoppinsBold';
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GRUZ CLIENT', 190, 126);
+    ctx.textBaseline = 'alphabetic';
+    neonText(ctx, 'Your Minecraft.', 80, 330, 92);
+    neonText(ctx, 'Upgraded.', 80, 430, 92);
+    ctx.font = '30px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('FPS boost · cosmetics · friends & party', 80, 500);
+    chips(ctx, ['Free', '1.20 – 26.x', 'Fabric mods', 'Discord'], 80, 540, 52);
+    await heroFigure(ctx, skin, o.slim, 890, 296, 13);
+    codeBox(ctx, 80, 760, 920, 170, code, reward.toUpperCase());
+    ctx.font = '24px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText(`Download: ${DL}`, 80, 1000);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#dcaaff';
+    ctx.fillText(`with ${o.nick}`, 1000, 1000);
+    out.push({ name: 'gruz-post-square.png', title: 'Square post (1080×1080)', buffer: cv.toBuffer('image/png') });
+  }
+
+  // 3) Szeroki baner (Twitter/X, YouTube community, opis kanału)
+  {
+    const W = 1500, H = 500;
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext('2d');
+    bannerBg(ctx, W, H);
+    await logoAt(ctx, 70, 64, 70);
+    ctx.font = '26px PoppinsBold';
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GRUZ CLIENT', 156, 99);
+    ctx.textBaseline = 'alphabetic';
+    neonText(ctx, `${o.nick} plays on Gruz`, 70, 250, fitFont(ctx, `${o.nick} plays on Gruz`, 820, 76, 'PoppinsBold'));
+    ctx.font = '26px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('The free Minecraft client with FPS boost and cosmetics.', 70, 300);
+    codeBox(ctx, 70, 336, 600, 120, code, reward.toUpperCase());
+    ctx.font = '22px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText(`Download: ${DL}`, 700, 420);
+    await heroFigure(ctx, skin, o.slim, 1240, 70, 11);
+    out.push({ name: 'gruz-banner-wide.png', title: 'Wide banner (1500×500)', buffer: cv.toBuffer('image/png') });
+  }
+
+  // 4) Ekran 16:9 (start streama / przerwa / koniec filmu)
+  {
+    const W = 1920, H = 1080;
+    const cv = createCanvas(W, H);
+    const ctx = cv.getContext('2d');
+    bannerBg(ctx, W, H);
+    await logoAt(ctx, 120, 110, 120);
+    ctx.font = '40px PoppinsBold';
+    ctx.fillStyle = '#fff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GRUZ CLIENT', 264, 170);
+    ctx.textBaseline = 'alphabetic';
+    ctx.font = '40px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText(`${o.nick} is playing on`, 120, 450);
+    neonText(ctx, 'GRUZ CLIENT', 112, 590, 150);
+    ctx.font = '38px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.72)';
+    ctx.fillText('Free · FPS boost · cosmetics · friends & party', 120, 670);
+    codeBox(ctx, 120, 740, 900, 190, code, reward.toUpperCase());
+    ctx.font = '30px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.fillText(`Download: ${DL}`, 120, 1000);
+    await heroFigure(ctx, skin, o.slim, 1500, 170, 24);
+    out.push({ name: 'gruz-screen-16x9.png', title: 'Stream screen / video end card (1920×1080)', buffer: cv.toBuffer('image/png') });
+  }
+  return out;
+}
+
+module.exports = { captcha, newCode, skinCard, mojangProfile, fetchBuf, HD_CAPES, partnerBanners };

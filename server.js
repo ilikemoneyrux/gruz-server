@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -24,9 +24,11 @@ const db = {
   servers: {}, // "hypixel.net" -> { ms, players: [uuid], sessions, last } – topka serwerów
   discord: {}, // ustawienia bota Discord (język, kanały, tickety, giveawaye)
   crashes: [], // raporty crashy wysłane z launchera (najnowsze na początku)
+  promo: { partners: [], ads: [], creatorReward: 'cape:nebula' }, // serwery partnerskie i reklamy w launcherze
+  creators: {}, // KOD -> { code, name, discordId, cosmetic, uses: [uuid], created } – kody twórców
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
-  ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes']];
+  ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes'], ['promo.json', 'promo'], ['creators.json', 'creators']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -107,9 +109,32 @@ function updateBadges(uuid) {
 }
 function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
-    discord: u.discord ? { tag: u.discord.tag } : null };
+    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: u.referredBy ? db.creators[u.referredBy]?.name || u.referredBy : null };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
+
+// ---------------- kody twórców ----------------
+// Gracz może raz (do 14 dni od pierwszego logowania) podać kod twórcy – dostaje kosmetykę, a twórca +1 do licznika.
+const CREATOR_WINDOW = 14 * 864e5;
+const creatorKey = (s) => String(s || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
+function useCreator(uuid, raw) {
+  const u = user(uuid);
+  const code = creatorKey(raw);
+  const cr = db.creators[code];
+  if (!u || !cr) return { error: 'CREATOR_INVALID' };
+  if (u.referredBy) return { error: 'CREATOR_USED' };
+  if (now() - (u.firstSeen || 0) > CREATOR_WINDOW) return { error: 'CREATOR_LATE' };
+  if (cr.discordId && u.discord?.id === cr.discordId) return { error: 'CREATOR_SELF' };
+  u.referredBy = code;
+  cr.uses ||= [];
+  cr.uses.push(uuid);
+  const cosmetic = cr.cosmetic || db.promo?.creatorReward || 'cape:nebula';
+  if (catalog.exists(cosmetic) && !u.unlocked.includes(cosmetic)) u.unlocked.push(cosmetic);
+  save();
+  updateBadges(uuid);
+  pushMe(uuid);
+  return { ok: true, name: cr.name, cosmetic };
+}
 
 // ---------------- kosmetyki na kody ----------------
 const catalog = require('./catalog');
@@ -319,6 +344,10 @@ const handlers = {
     const code = String(m.code || '').trim().toUpperCase().replace(/[^A-Z0-9-]/g, '').slice(0, 32);
     const entry = db.codes[code];
     const u = user(c.uuid);
+    if (!entry && db.creators[creatorKey(code)]) {
+      const r = useCreator(c.uuid, code);
+      return c.send(r.ok ? { t: 'creator.result', ...r } : { t: 'error', code: r.error });
+    }
     if (!entry) return c.send({ t: 'error', code: 'CODE_INVALID' });
     if (entry.used.includes(c.uuid) || u.unlocked.includes(entry.cosmetic)) return c.send({ t: 'error', code: 'CODE_USED' });
     if (entry.maxUses && entry.used.length >= entry.maxUses) return c.send({ t: 'error', code: 'CODE_EXHAUSTED' });
@@ -328,6 +357,12 @@ const handlers = {
     c.send({ t: 'unlocked', cosmetic: entry.cosmetic, unlocked: u.unlocked });
     updateBadges(c.uuid);
     pushMe(c.uuid);
+  },
+
+  /** Kod twórcy podany przy pierwszym uruchomieniu launchera */
+  'creator.use'(c, m) {
+    const r = useCreator(c.uuid, m.code);
+    c.send(r.ok ? { t: 'creator.result', ...r } : { t: 'creator.result', ok: false, code: r.error });
   },
 
   /** Kosmetyka sezonowa: za darmo, ale tylko w czasie wydarzenia */
@@ -548,16 +583,46 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'max-age=60' });
     return res.end(JSON.stringify(db.news.slice(0, 20)));
   }
+  if (url.pathname === '/promo.json') {
+    const p = db.promo || {};
+    const t0 = now();
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'max-age=120' });
+    return res.end(JSON.stringify({
+      partners: (p.partners || []).filter((x) => !x.hidden),
+      ads: (p.ads || []).filter((a) => !a.hidden && (!a.until || a.until > t0)),
+      creatorReward: p.creatorReward || 'cape:nebula',
+    }));
+  }
+  if (url.pathname === '/join') return joinPage(res, url);
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin.route(req, res, url, adminCtx);
   res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
   res.end('Gruz Client server ' + VERSION);
 });
 
+/** Strona z przycisku "Join" na Discordzie: otwiera launcher (gruzclient://join/<ip>) */
+function joinPage(res, url) {
+  const ip = String(url.searchParams.get('ip') || '').trim().slice(0, 80);
+  const ok = /^[a-z0-9.-]+(:\d{1,5})?$/i.test(ip);
+  const e = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const deep = ok ? `gruzclient://join/${ip}` : '';
+  res.writeHead(ok ? 200 : 400, { 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY' });
+  res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Join ${e(ip)} · Gruz Client</title>${ok ? `<meta http-equiv="refresh" content="0;url=${e(deep)}">` : ''}
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07050c;color:#f1ecf8;font:16px/1.5 'Segoe UI',system-ui,sans-serif}
+.c{max-width:420px;padding:32px;border:1px solid #2b2139;background:#0c0912;text-align:center}h1{margin:0 0 6px;font-size:22px;color:#dcaaff}
+code{color:#dcaaff;font-size:18px}a{display:inline-block;margin:14px 6px 0;padding:10px 18px;background:#b45cff;color:#12051f;font-weight:700;text-decoration:none}
+a.g{background:transparent;color:#f1ecf8;border:1px solid #2b2139}p{color:#9488a8}</style></head><body><div class="c">
+${ok ? `<h1>Opening Gruz Client…</h1><p>Joining</p><code>${e(ip)}</code><br><a href="${e(deep)}">Open launcher</a>
+<a class="g" href="https://github.com/ilikemoneyrux/gruz-client/releases/latest">Download Gruz Client</a>
+<p>Nothing happened? Install Gruz Client, then click "Open launcher" again.</p>` : '<h1>Bad server address</h1>'}
+</div></body></html>`);
+}
+
 /** To, czego potrzebuje panel admina */
 const adminCtx = {
   password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
-  updateBadges, pushMe,
+  updateBadges, pushMe, catalog,
 };
 
 
@@ -638,7 +703,7 @@ setInterval(() => {
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
-    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode,
+    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
     onCrash: (f) => crashListeners.push(f),
     badgeName: (id) => { const b = BADGES.find((x) => x.id === id); return b && (db.discord?.lang === 'pl' ? b.pl : b.en || b.pl); },
   });

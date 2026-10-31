@@ -95,8 +95,29 @@ const adminCmd = new SlashCommandBuilder()
     .addSubcommand((s) => s.setName('crashes-channel').setDescription('Channel for crash reports sent from the launcher (staff only!)')
       .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText)))
     .addSubcommand((s) => s.setName('member-role').setDescription('Role given after linking a Minecraft account (e.g. Gruz Member)')
-      .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true))))
+      .addRoleOption((o) => o.setName('role').setDescription('Role').setRequired(true)))
+    .addSubcommand((s) => s.setName('partner-role').setDescription('Add/remove a role that can use /gruzpartner (e.g. Partner, Content Creator)')
+      .addRoleOption((o) => o.setName('role').setDescription('Role (run again to remove)').setRequired(true))))
+  .addSubcommandGroup((g) => g.setName('event').setDescription('Community events')
+    .addSubcommand((s) => s.setName('create').setDescription('Announce an event with a reminder and a Join button')
+      .addStringOption((o) => o.setName('title').setDescription('e.g. Bedwars tournament').setRequired(true).setMaxLength(80))
+      .addStringOption((o) => o.setName('when').setDescription('"20:00", "tomorrow 18:30", "05.11 20:00", "2026-11-05 20:00" or "in 2h"').setRequired(true).setMaxLength(40))
+      .addStringOption((o) => o.setName('server').setDescription('Server IP players should join, e.g. mc.hypixel.net').setMaxLength(80))
+      .addStringOption((o) => o.setName('description').setDescription('What is going to happen').setMaxLength(1000))
+      .addStringOption((o) => o.setName('prize').setDescription('e.g. Galaxy cape for the winner').setMaxLength(100))
+      .addRoleOption((o) => o.setName('ping').setDescription('Role to ping in the announcement'))
+      .addChannelOption((o) => o.setName('channel').setDescription('Where to post it (default: here)').addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
+    .addSubcommand((s) => s.setName('cancel').setDescription('Cancel an event')
+      .addStringOption((o) => o.setName('message_id').setDescription('Event message ID').setRequired(true))))
   .addSubcommand((s) => s.setName('wipe').setDescription('Delete every channel except the bot channels'));
+
+const partnerCmd = new SlashCommandBuilder()
+  .setName('gruzpartner').setDescription('Gruz Client – for partners and content creators').setDMPermission(false)
+  .addSubcommand((s) => s.setName('set-nick').setDescription('Set your creator name (YouTube/Twitch/TikTok) and your creator code')
+    .addStringOption((o) => o.setName('nick').setDescription('Name shown on your banners, e.g. your YouTube name').setRequired(true).setMaxLength(24))
+    .addStringOption((o) => o.setName('code').setDescription('Creator code players type in the launcher (default: your nick)').setMinLength(3).setMaxLength(16)))
+  .addSubcommand((s) => s.setName('banners').setDescription('Get ready-made Gruz Client ads with your name and creator code'))
+  .addSubcommand((s) => s.setName('stats').setDescription('How many players used your creator code'));
 
 
 module.exports = function startDiscord(ctx) {
@@ -764,6 +785,14 @@ module.exports = function startDiscord(ctx) {
       save();
       return reply(i, t('cfgLang'));
     }
+    if (sub === 'partner-role') {
+      const role = i.options.getRole('role', true);
+      c.partnerRoles ||= [];
+      const had = c.partnerRoles.includes(role.id);
+      c.partnerRoles = had ? c.partnerRoles.filter((x) => x !== role.id) : [...c.partnerRoles, role.id];
+      save();
+      return reply(i, t(had ? 'cfgPartnerOff' : 'cfgPartnerOn', { r: `${role}`, list: c.partnerRoles.map((x) => `<@&${x}>`).join(', ') || t('none') }));
+    }
     if (sub === 'member-role') {
       const role = i.options.getRole('role', true);
       const me = i.guild.members.me;
@@ -844,6 +873,191 @@ module.exports = function startDiscord(ctx) {
     } catch (e) { console.error('[discord] crash:', e.message); }
   });
 
+
+  // ---------------- partnerzy i twórcy ----------------
+  const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
+  const DOWNLOAD = `https://github.com/${RELEASES_REPO}/releases/latest`;
+  const isPartner = (i) => isAdmin(i) || (cfg().partnerRoles || []).some((r) => i.member?.roles?.cache?.has(r));
+  const creatorOf = (discordId) => Object.values(db.creators || {}).find((c) => c.discordId === discordId) || null;
+  const rewardOf = (cr) => cr?.cosmetic || db.promo?.creatorReward || 'cape:nebula';
+  const rewardEn = (key) => { const [slot, v] = key.split(':'); return `${cap(v)} ${(SLOT.en[slot] || slot).toLowerCase()}`; };
+
+  async function cmdPartner(i, sub) {
+    if (!isPartner(i)) return reply(i, t('pnOnly'));
+    db.creators ||= {};
+    const mine = creatorOf(i.user.id);
+    if (sub === 'set-nick') {
+      const nick = i.options.getString('nick', true).trim().replace(/[\n\r]/g, ' ').slice(0, 24);
+      const code = ctx.creatorKey(i.options.getString('code') || mine?.code || nick);
+      if (code.length < 3) return reply(i, t('pnCodeShort'));
+      const taken = db.creators[code];
+      if ((taken && taken.discordId !== i.user.id) || db.codes[code]) return reply(i, t('pnCodeTaken', { code }));
+      const entry = { code, name: nick, discordId: i.user.id, cosmetic: mine?.cosmetic || null, uses: mine?.uses || [], created: mine?.created || Date.now() };
+      if (mine && mine.code !== code) {
+        delete db.creators[mine.code];
+        for (const u of Object.values(db.users)) if (u.referredBy === mine.code) u.referredBy = code;
+      }
+      db.creators[code] = entry;
+      save();
+      logTo({ content: t('pnLog', { user: `${i.user}`, nick, code }), allowedMentions: { parse: [] } });
+      return i.reply({ ephemeral: true, embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('pnSetTitle'))
+        .setDescription(t('pnSetText', { nick, code, reward: cosmeticLabel(rewardOf(entry)) }))] });
+    }
+    if (!mine) return reply(i, t('pnNoNick'));
+    if (sub === 'stats') {
+      const week = Date.now() - 7 * 864e5;
+      const users = (mine.uses || []).map((u) => db.users[u]).filter(Boolean);
+      const recent = users.filter((u) => (u.firstSeen || 0) > week).length;
+      const hours = users.reduce((a, u) => a + (u.stats?.totalMs || 0), 0) / 36e5;
+      return i.reply({ ephemeral: true, embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('pnStatsTitle', { code: mine.code }))
+        .addFields(
+          { name: t('pnStatsTotal'), value: String(users.length), inline: true },
+          { name: t('pnStatsWeek'), value: String(recent), inline: true },
+          { name: t('pnStatsHours'), value: hoursText(hours * 36e5), inline: true },
+        ).setFooter({ text: t('pnStatsFoot') })] });
+    }
+    if (sub === 'banners') {
+      if (slow(i, 20_000)) return reply(i, t('pnSlow'));
+      await i.deferReply({ ephemeral: true });
+      let skin = null, slim = false;
+      const linked = db.users[linkedUuid(i.user.id)];
+      if (linked) {
+        try { const p = await images.mojangProfile(linked.name); if (p?.skinUrl) { skin = await images.fetchBuf(p.skinUrl); slim = p.slim; } } catch { /* bez skina */ }
+      }
+      const reward = 'free ' + rewardEn(rewardOf(mine));
+      const list = await images.partnerBanners({ nick: mine.name, code: mine.code, reward, skin, slim });
+      const files = list.map((b) => new AttachmentBuilder(b.buffer, { name: b.name }));
+      const promoText = t('pnPromoText', { code: mine.code, reward, url: DOWNLOAD });
+      const e = new EmbedBuilder().setColor(COLOR).setTitle(t('pnBannersTitle'))
+        .setDescription(t('pnBannersText', { list: list.map((b) => `• **${b.title}** – \`${b.name}\``).join('\n') })
+          + (linked ? '' : '\n\n' + t('pnNoSkin')))
+        .addFields({ name: t('pnPromoField'), value: '```' + promoText + '```' })
+        .setImage('attachment://' + list[1].name);
+      return i.editReply({ embeds: [e], files });
+    }
+  }
+
+  // ---------------- eventy ----------------
+  const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
+  function tzOffset(ms) {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TZ, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      .formatToParts(new Date(ms)).map((x) => [x.type, Number(x.value)]));
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour % 24, p.minute, p.second) - Math.floor(ms / 1000) * 1000;
+  }
+  function zoned(y, mo, d, h, mi) {
+    const guess = Date.UTC(y, mo - 1, d, h, mi);
+    let ms = guess - tzOffset(guess);
+    ms = guess - tzOffset(ms);
+    return ms;
+  }
+  /** "20:00", "tomorrow 18:30", "05.11 20:00", "2026-11-05 20:00", "in 2h" -> ms albo null */
+  function parseWhen(raw) {
+    const s = String(raw || '').trim().toLowerCase();
+    let m;
+    if ((m = /^(?:in|za)\s+(.+)$/.exec(s))) { const d = parseDuration(m[1]); return d ? Date.now() + d : null; }
+    const nowP = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: TZ, year: 'numeric', month: 'numeric', day: 'numeric' })
+      .formatToParts(new Date()).map((x) => [x.type, Number(x.value)]));
+    if ((m = /^(today|tomorrow|dzi[sś]|jutro)?\s*(\d{1,2})[:.](\d{2})$/.exec(s))) {
+      const plus = /tomorrow|jutro/.test(m[1] || '') ? 1 : 0;
+      let at = zoned(nowP.year, nowP.month, nowP.day + plus, +m[2], +m[3]);
+      if (!m[1] && at < Date.now()) at = zoned(nowP.year, nowP.month, nowP.day + 1, +m[2], +m[3]);
+      return at;
+    }
+    if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})[ t](\d{1,2}):(\d{2})$/.exec(s))) return zoned(+m[1], +m[2], +m[3], +m[4], +m[5]);
+    if ((m = /^(\d{1,2})[./](\d{1,2})(?:[./](\d{4}))?\s+(\d{1,2})[:.](\d{2})$/.exec(s))) {
+      let at = zoned(m[3] ? +m[3] : nowP.year, +m[2], +m[1], +m[4], +m[5]);
+      if (!m[3] && at < Date.now() - 864e5) at = zoned(nowP.year + 1, +m[2], +m[1], +m[4], +m[5]);
+      return at;
+    }
+    return null;
+  }
+  const joinUrl = (ip) => `${PUBLIC_URL}/join?ip=${encodeURIComponent(ip)}`;
+  function eventView(ev) {
+    const e = new EmbedBuilder().setColor(ev.cancelled ? RED : COLOR)
+      .setTitle(`${ev.cancelled ? '❌' : ev.started ? '🟢' : '📅'} ${ev.title}`)
+      .setDescription([ev.cancelled ? `**${t('evCancelled')}**` : '', ev.desc || ''].filter(Boolean).join('\n\n') || null)
+      .addFields(
+        { name: t('evWhen'), value: `${ts(ev.at, 'F')} · ${ts(ev.at, 'R')}`, inline: false },
+        ...(ev.server ? [{ name: t('evServer'), value: '`' + ev.server + '`', inline: true }] : []),
+        ...(ev.prize ? [{ name: t('evPrize'), value: ev.prize, inline: true }] : []),
+        { name: t('evGoing'), value: String(ev.going.length), inline: true },
+      ).setThumbnail('attachment://logo.png').setFooter({ text: t('evFoot') });
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('ev:go').setStyle(ButtonStyle.Primary).setEmoji('🔔').setLabel(t('evBtnGo', { n: ev.going.length })).setDisabled(!!ev.cancelled || !!ev.ended),
+      ...(ev.server ? [new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('🎮').setLabel(t('evBtnJoin')).setURL(joinUrl(ev.server))] : []),
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('⬇️').setLabel(t('evBtnDownload')).setURL(DOWNLOAD));
+    return { embeds: [e], components: [row] };
+  }
+  async function cmdEvent(i, sub) {
+    const c = cfg();
+    c.events ||= {};
+    if (sub === 'cancel') {
+      const id = i.options.getString('message_id', true).trim();
+      const ev = c.events[id];
+      if (!ev) return reply(i, t('evNotFound'));
+      ev.cancelled = true;
+      save();
+      try { const ch = await client.channels.fetch(ev.channelId); const msg = await ch.messages.fetch(id); await msg.edit(eventView(ev)); } catch { /* usunięta */ }
+      delete c.events[id];
+      save();
+      return reply(i, t('evCancelOk'));
+    }
+    const at = parseWhen(i.options.getString('when', true));
+    if (!at || at < Date.now() - 60_000 || at > Date.now() + 90 * 864e5) return reply(i, t('evBadTime'));
+    const server = (i.options.getString('server') || '').trim().toLowerCase();
+    if (server && !/^[a-z0-9.-]+(:\d{1,5})?$/.test(server)) return reply(i, t('evBadServer'));
+    const ch = i.options.getChannel('channel') || i.channel;
+    const ping = i.options.getRole('ping');
+    const ev = { title: i.options.getString('title', true), desc: i.options.getString('description') || '', prize: i.options.getString('prize') || '',
+      server, at, going: [], channelId: ch.id, by: i.user.id, reminded: at - Date.now() < 15 * 60_000, started: false };
+    await i.deferReply({ ephemeral: true });
+    const msg = await ch.send({ content: ping ? `${ping}` : undefined, ...eventView(ev), files: [logoFile()], allowedMentions: { roles: ping ? [ping.id] : [] } });
+    ev.id = msg.id;
+    c.events[msg.id] = ev;
+    save();
+    return i.editReply({ content: t('evCreated', { url: msg.url, t: ts(at, 'F') }) });
+  }
+  async function btnEvent(i) {
+    const ev = cfg().events?.[i.message.id];
+    if (!ev || ev.cancelled) return reply(i, t('evNotFound'));
+    const had = ev.going.includes(i.user.id);
+    ev.going = had ? ev.going.filter((x) => x !== i.user.id) : [...ev.going, i.user.id];
+    save();
+    await i.update(eventView(ev));
+    return i.followUp({ content: had ? t('evLeft') : t('evJoined', { t: ts(ev.at, 'R') }), ephemeral: true });
+  }
+  async function eventTick() {
+    const evs = cfg().events || {};
+    for (const ev of Object.values(evs)) {
+      const left = ev.at - Date.now();
+      try {
+        if (!ev.reminded && left <= 15 * 60_000 && left > 0) {
+          ev.reminded = true;
+          save();
+          const ch = await client.channels.fetch(ev.channelId);
+          const who = ev.going.slice(0, 60).map((u) => `<@${u}>`).join(' ');
+          await ch.send({ content: `${who}\n` + t('evReminder', { title: ev.title, t: ts(ev.at, 'R') }) + (ev.server ? '\n' + t('evServerLine', { s: ev.server }) : ''),
+            reply: { messageReference: ev.id, failIfNotExists: false }, allowedMentions: { users: ev.going.slice(0, 60) } });
+        }
+        if (!ev.started && left <= 0) {
+          ev.started = true;
+          save();
+          const ch = await client.channels.fetch(ev.channelId);
+          const row = ev.server ? [new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('🎮').setLabel(t('evBtnJoin')).setURL(joinUrl(ev.server)))] : [];
+          await ch.send({ content: t('evStarting', { title: ev.title }) + (ev.server ? '\n' + t('evServerLine', { s: ev.server }) : ''), components: row,
+            reply: { messageReference: ev.id, failIfNotExists: false }, allowedMentions: { parse: [] } });
+          try { const msg = await ch.messages.fetch(ev.id); await msg.edit(eventView(ev)); } catch { /* ignore */ }
+        }
+        if (left < -6 * 36e5) {
+          ev.ended = true;
+          try { const ch = await client.channels.fetch(ev.channelId); const msg = await ch.messages.fetch(ev.id); await msg.edit(eventView(ev)); } catch { /* ignore */ }
+          delete evs[ev.id];
+          save();
+        }
+      } catch (e) { console.error('[discord] event:', e.message); }
+    }
+  }
+
   // ---------------- router ----------------
   client.on('interactionCreate', async (i) => {
     try {
@@ -889,6 +1103,7 @@ module.exports = function startDiscord(ctx) {
           if (sub === 'skin') return cmdSkin(i);
           if (sub === 'server') return cmdServer(i);
         }
+        if (i.commandName === 'gruzpartner') return cmdPartner(i, i.options.getSubcommand());
         if (i.commandName === 'gruzadmin') {
           if (!isAdmin(i)) return reply(i, t('adminOnly'));
           const group = i.options.getSubcommandGroup(false);
@@ -901,6 +1116,7 @@ module.exports = function startDiscord(ctx) {
           if (group === 'tickets') return cmdTickets(i, sub);
           if (group === 'verify') return cmdVerifyPanel(i);
           if (group === 'config') return cmdConfig(i, sub);
+          if (group === 'event') return cmdEvent(i, sub);
           if (sub === 'code') return cmdCode(i);
           if (sub === 'wipe') return cmdWipe(i);
         }
@@ -912,6 +1128,7 @@ module.exports = function startDiscord(ctx) {
         if (kind === 'gw') return btnGiveaway(i, a);
         if (kind === 'tk') return btnTicket(i, a);
         if (kind === 'vf') return btnVerify(i, a);
+        if (kind === 'ev') return btnEvent(i);
         if (kind === 'wipe') { if (!isAdmin(i)) return reply(i, t('adminOnly')); return btnWipe(i, a, b); }
         return;
       }
@@ -952,7 +1169,7 @@ module.exports = function startDiscord(ctx) {
     try {
       const rest = new REST({ version: '10' }).setToken(token);
       const route = guildId ? Routes.applicationGuildCommands(client.user.id, guildId) : Routes.applicationCommands(client.user.id);
-      await rest.put(route, { body: [publicCmd.toJSON(), adminCmd.toJSON()] });
+      await rest.put(route, { body: [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON()] });
       console.log('[discord] komendy zarejestrowane' + (guildId ? ' na serwerze' : ' globalnie (mogą pojawić się po godzinie)'));
     } catch (e) { console.error('[discord] rejestracja komend:', e.message); }
     updateStatus();
@@ -960,10 +1177,11 @@ module.exports = function startDiscord(ctx) {
     setInterval(() => giveawayTick().catch((e) => console.error('[discord] giveaway tick:', e.message)), 10_000);
     releaseTick();
     setInterval(releaseTick, 10 * 60_000);
+    setInterval(() => eventTick().catch((e) => console.error('[discord] event tick:', e.message)), 30_000);
   });
 
   client.login(token).catch((e) => console.error('[discord] logowanie nieudane:', e.message));
   return client;
 };
 
-module.exports.commands = () => [publicCmd.toJSON(), adminCmd.toJSON()];
+module.exports.commands = () => [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON()];

@@ -52,6 +52,15 @@
   .err { color: var(--bad); min-height: 20px; margin: 0; }
   .news-item { border-left: 2px solid var(--neon); padding: 6px 12px; margin-bottom: 10px; background: var(--rubble); }
   .news-item h3 { margin: 0; font-size: 15px; }
+  .ad-prev { display: flex; gap: 12px; align-items: center; background: var(--rubble); padding: 10px; margin-bottom: 8px; border-left: 3px solid var(--neon); }
+  .ad-prev img { width: 120px; height: 60px; object-fit: cover; background: #000; }
+  .ad-prev .grow { flex: 1; min-width: 0; }
+  .ad-prev h3 { margin: 0; font-size: 15px; }
+  .ad-prev p { margin: 2px 0 0; color: var(--mute); font-size: 13px; }
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .three label { display: block; font-size: 12px; color: var(--mute); } .three input, .three select { width: 100%; }
+  pre.log { max-height: 420px; overflow: auto; background: #000; padding: 12px; font-size: 12px; white-space: pre-wrap; }
+  @media (max-width: 760px) { .three { grid-template-columns: 1fr; } }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .two label, .one label { display: block; font-size: 12px; color: var(--mute); }
   .two input, .one input { width: 100%; }
@@ -84,6 +93,9 @@
       <button data-tab="users">Gracze</button>
       <button data-tab="codes">Kody</button>
       <button data-tab="news">Newsy</button>
+      <button data-tab="promo">Partnerzy i reklamy</button>
+      <button data-tab="creators">Twórcy</button>
+      <button data-tab="crashes">Crashe</button>
     </nav>
     <button class="ghost" id="logout">Wyloguj</button>
   </header>
@@ -130,6 +142,61 @@
       <div class="row" style="margin-top:10px"><button class="btn" id="n-add">Opublikuj</button><span class="err" id="n-err"></span></div>
     </div>
     <div class="card"><h2>Opublikowane</h2><div id="news"></div></div>
+  </section>
+  <section data-panel="promo" hidden>
+    <div class="card">
+      <h2>Serwer partnerski</h2>
+      <p class="muted">Pokazuje się na górze listy serwerów w launcherze (z pingiem i przyciskiem Dołącz).</p>
+      <div class="three">
+        <label>Nazwa<input id="pa-name" placeholder="np. GrowMC" /></label>
+        <label>IP<input id="pa-ip" placeholder="play.growmc.pl" /></label>
+        <label>Etykieta<input id="pa-tag" placeholder="Partner / Survival / PvP" /></label>
+      </div>
+      <div class="two" style="margin-top:10px">
+        <label>Opis (krótki)<input id="pa-desc" placeholder="Najlepszy survival w PL" /></label>
+        <label>Strona / Discord (https://…, opcjonalnie)<input id="pa-url" /></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="pa-add">Dodaj / zapisz</button><span class="err" id="pa-err"></span></div>
+    </div>
+    <div class="card"><h2>Serwery partnerskie</h2><table><thead><tr><th>Nazwa</th><th>IP</th><th>Etykieta</th><th>Opis</th><th></th></tr></thead><tbody id="partners"></tbody></table></div>
+
+    <div class="card">
+      <h2>Nowa reklama</h2>
+      <p class="muted">Baner na stronie Graj w launcherze. Kilka reklam zmienia się co 8 s. Obrazek: link https do PNG/JPG (najlepiej 1200×400).</p>
+      <div class="two">
+        <label>Tytuł<input id="ad-title" placeholder="Nowy sezon na GrowMC!" /></label>
+        <label>Tekst<input id="ad-text" placeholder="Wbijaj od piątku 18:00" /></label>
+        <label>Obrazek (https://…)<input id="ad-image" /></label>
+        <label>Link po kliknięciu (https://…)<input id="ad-url" /></label>
+        <label>Napis na przycisku<input id="ad-cta" placeholder="Sprawdź" /></label>
+        <label>Ile dni ma wisieć (0 = bez końca)<input id="ad-days" type="number" min="0" value="0" /></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="ad-add">Dodaj reklamę</button><span class="err" id="ad-err"></span></div>
+    </div>
+    <div class="card"><h2>Reklamy</h2><div id="ads"></div></div>
+  </section>
+
+  <section data-panel="creators" hidden>
+    <div class="card">
+      <h2>Nowy kod twórcy</h2>
+      <p class="muted">Gracz wpisuje kod przy pierwszym uruchomieniu launchera (albo w polu „Kod” w Szafie do 14 dni od rejestracji) i dostaje kosmetykę. Partnerzy z Discorda mogą też sami ustawić kod przez <span class="code">/gruzpartner set-nick</span>.</p>
+      <div class="three">
+        <label>Kod<input id="cr-code" placeholder="RAE" /></label>
+        <label>Nazwa twórcy<input id="cr-name" placeholder="Rae" /></label>
+        <label>Nagroda<select id="cr-cos"></select></label>
+      </div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="cr-add">Zapisz kod</button><span class="err" id="cr-err"></span></div>
+    </div>
+    <div class="card">
+      <h2>Domyślna nagroda za kod twórcy</h2>
+      <div class="row"><select id="cr-reward"></select><button class="ghost" id="cr-reward-save">Zapisz</button><span class="muted" id="cr-reward-ok"></span></div>
+    </div>
+    <div class="card"><h2>Twórcy</h2><table><thead><tr><th>Kod</th><th>Twórca</th><th>Nagroda</th><th>Użycia</th><th>Discord</th><th></th></tr></thead><tbody id="creators"></tbody></table></div>
+  </section>
+
+  <section data-panel="crashes" hidden>
+    <div class="card"><h2>Raporty crashy</h2><table><thead><tr><th>Kiedy</th><th>Gracz</th><th>Wersja</th><th>Typ</th><th>Podejrzane mody</th><th></th></tr></thead><tbody id="crashes"></tbody></table></div>
+    <div class="card" id="crash-detail" hidden><h2 id="crash-title"></h2><p class="muted" id="crash-note"></p><pre class="log" id="crash-log"></pre></div>
   </section>
 </div>
 
@@ -180,7 +247,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -268,6 +335,114 @@
     if (!id || !confirm('Usunąć ten news?')) return;
     await api('news/' + encodeURIComponent(id), { method: 'DELETE' });
     loadNews();
+  });
+
+  // ---------- partnerzy i reklamy ----------
+  let promo = { partners: [], ads: [], cosmetics: [] };
+  const v = (id) => $(id).value.trim();
+  async function loadPromo() {
+    promo = await api('promo');
+    $('#partners').innerHTML = promo.partners.map((x, i) => `<tr data-id="${esc(x.id)}"><td><b>${esc(x.name)}</b></td><td class="code">${esc(x.ip)}</td>
+      <td>${x.tag ? `<span class="pill">${esc(x.tag)}</span>` : ''}</td><td class="muted">${esc(x.desc)}</td>
+      <td class="row"><button class="ghost" data-move="partner" data-dir="-1" ${i ? '' : 'disabled'}>↑</button><button class="ghost" data-move="partner" data-dir="1">↓</button>
+      <button class="ghost" data-edit="partner">Edytuj</button><button class="ghost" data-hide="partner">${x.hidden ? 'Pokaż' : 'Ukryj'}</button>
+      <button class="ghost danger" data-del="partner">Usuń</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Brak partnerów.</td></tr>';
+    $('#ads').innerHTML = promo.ads.map((a) => `<div class="ad-prev" data-id="${esc(a.id)}" style="${a.hidden ? 'opacity:.45' : ''}">
+      ${a.image ? `<img src="${esc(a.image)}" alt="">` : ''}<div class="grow"><h3>${esc(a.title)}</h3><p>${esc(a.text)}</p>
+      <p>${a.url ? esc(a.url) : 'bez linku'} · ${a.until ? (a.until < Date.now() ? 'wygasła' : 'do ' + new Date(a.until).toLocaleDateString('pl-PL')) : 'bez końca'}</p></div>
+      <button class="ghost" data-move="ad" data-dir="-1">↑</button><button class="ghost" data-move="ad" data-dir="1">↓</button>
+      <button class="ghost" data-hide="ad">${a.hidden ? 'Pokaż' : 'Ukryj'}</button><button class="ghost danger" data-del="ad">Usuń</button></div>`).join('')
+      || '<p class="muted">Brak reklam.</p>';
+  }
+  let editPartner = null;
+  $('#pa-add').addEventListener('click', async () => {
+    $('#pa-err').textContent = '';
+    try {
+      await api('promo/partner', { method: 'POST', body: { id: editPartner, name: v('#pa-name'), ip: v('#pa-ip'), tag: v('#pa-tag'), desc: v('#pa-desc'), url: v('#pa-url') } });
+      ['#pa-name', '#pa-ip', '#pa-tag', '#pa-desc', '#pa-url'].forEach((s) => { $(s).value = ''; });
+      editPartner = null; $('#pa-add').textContent = 'Dodaj / zapisz';
+      loadPromo();
+    } catch (err) { $('#pa-err').textContent = err.message; }
+  });
+  $('#ad-add').addEventListener('click', async () => {
+    $('#ad-err').textContent = '';
+    try {
+      await api('promo/ad', { method: 'POST', body: { title: v('#ad-title'), text: v('#ad-text'), image: v('#ad-image'), url: v('#ad-url'), cta: v('#ad-cta'), days: v('#ad-days') } });
+      ['#ad-title', '#ad-text', '#ad-image', '#ad-url', '#ad-cta'].forEach((s) => { $(s).value = ''; });
+      loadPromo();
+    } catch (err) { $('#ad-err').textContent = err.message; }
+  });
+  document.querySelector('[data-panel="promo"]').addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    const row = b?.closest('[data-id]');
+    if (!b || !row) return;
+    const id = row.dataset.id;
+    if (b.dataset.move) await api('promo/move', { method: 'POST', body: { kind: b.dataset.move, id, dir: Number(b.dataset.dir) } });
+    else if (b.dataset.del) { if (!confirm('Usunąć?')) return; await api(`promo/${b.dataset.del}/${encodeURIComponent(id)}`, { method: 'DELETE' }); }
+    else if (b.dataset.hide) {
+      const item = (b.dataset.hide === 'ad' ? promo.ads : promo.partners).find((x) => x.id === id);
+      await api('promo/' + b.dataset.hide, { method: 'POST', body: { ...item, hidden: !item.hidden } });
+    } else if (b.dataset.edit) {
+      const x = promo.partners.find((p) => p.id === id);
+      editPartner = id;
+      $('#pa-name').value = x.name; $('#pa-ip').value = x.ip; $('#pa-tag').value = x.tag; $('#pa-desc').value = x.desc; $('#pa-url').value = x.url || '';
+      $('#pa-add').textContent = 'Zapisz zmiany';
+      $('#pa-name').focus();
+      return;
+    }
+    loadPromo();
+  });
+
+  // ---------- twórcy ----------
+  async function loadCreators() {
+    if (!promo.cosmetics.length) promo = await api('promo');
+    const opts = (sel) => promo.cosmetics.map((c) => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
+    $('#cr-cos').innerHTML = '<option value="">domyślna (' + esc(promo.creatorReward) + ')</option>' + opts('');
+    $('#cr-reward').innerHTML = opts(promo.creatorReward);
+    const list = await api('creators');
+    $('#creators').innerHTML = list.map((c) => `<tr><td class="code">${esc(c.code)}</td><td>${esc(c.name)}</td>
+      <td>${esc(c.cosmetic || 'domyślna')}</td><td><b>${c.uses}</b></td><td class="muted">${c.discordId ? 'połączony' : '—'}</td>
+      <td><button class="ghost danger" data-del="${esc(c.code)}">Usuń</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">Brak kodów twórców.</td></tr>';
+  }
+  $('#cr-add').addEventListener('click', async () => {
+    $('#cr-err').textContent = '';
+    try {
+      await api('creators', { method: 'POST', body: { code: v('#cr-code'), name: v('#cr-name'), cosmetic: $('#cr-cos').value } });
+      $('#cr-code').value = ''; $('#cr-name').value = '';
+      loadCreators();
+    } catch (err) { $('#cr-err').textContent = err.message; }
+  });
+  $('#cr-reward-save').addEventListener('click', async () => {
+    await api('promo/reward', { method: 'POST', body: { cosmetic: $('#cr-reward').value } });
+    promo.creatorReward = $('#cr-reward').value;
+    $('#cr-reward-ok').textContent = 'Zapisano';
+    loadCreators();
+  });
+  $('#creators').addEventListener('click', async (e) => {
+    const code = e.target.dataset.del;
+    if (!code || !confirm('Usunąć kod ' + code + '?')) return;
+    await api('creators/' + encodeURIComponent(code), { method: 'DELETE' });
+    loadCreators();
+  });
+
+  // ---------- crashe ----------
+  async function loadCrashes() {
+    const list = await api('crashes');
+    $('#crashes').innerHTML = list.map((r) => `<tr><td class="muted">${ago(r.at)}</td><td>${esc(r.name)}</td>
+      <td>${esc(r.mc || '?')} · ${esc(r.launcher || '?')}</td><td>${esc(r.kind || '?')}</td><td>${esc((r.mods || []).join(', '))}</td>
+      <td><button class="ghost" data-open="${esc(r.id)}">Log</button></td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">Brak raportów.</td></tr>';
+  }
+  $('#crashes').addEventListener('click', async (e) => {
+    const id = e.target.dataset.open;
+    if (!id) return;
+    const r = await api('crashes/' + encodeURIComponent(id));
+    $('#crash-detail').hidden = false;
+    $('#crash-title').textContent = `${r.title || 'Crash'} · ${r.name}`;
+    $('#crash-note').textContent = r.note ? 'Notatka gracza: ' + r.note : (r.text || '');
+    $('#crash-log').textContent = r.log || r.excerpt || '';
+    $('#crash-detail').scrollIntoView({ behavior: 'smooth' });
   });
 
   function start() { show('app'); loadStats().catch(() => {}); }

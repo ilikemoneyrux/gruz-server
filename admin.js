@@ -56,7 +56,7 @@ async function route(req, res, url, ctx) {
   if (p === '/admin' || p === '/admin/') {
     res.writeHead(200, {
       'content-type': 'text/html; charset=utf-8',
-      'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' https://mc-heads.net data:",
+      'content-security-policy': "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' https: data:",
       'x-frame-options': 'DENY',
     });
     return res.end(fs.readFileSync(PAGE, 'utf8').replace('__ENABLED__', ctx.password ? 'true' : 'false'));
@@ -153,6 +153,85 @@ async function route(req, res, url, ctx) {
     }
     if (p.startsWith('/admin/api/codes/') && req.method === 'DELETE') {
       delete db.codes[decodeURIComponent(p.slice('/admin/api/codes/'.length))];
+      ctx.save();
+      return json(res, 200, { ok: true });
+    }
+
+    // ---------- serwery partnerskie i reklamy ----------
+    const str = (v, n) => String(v ?? '').trim().slice(0, n);
+    const httpUrl = (v) => { const s = str(v, 400); return /^https:\/\//i.test(s) ? s : ''; };
+    db.promo ||= { partners: [], ads: [], creatorReward: 'cape:nebula' };
+    if (p === '/admin/api/promo' && req.method === 'GET') {
+      return json(res, 200, { ...db.promo, cosmetics: ctx.LOCKED.filter((k) => k !== 'all') });
+    }
+    if (p === '/admin/api/promo/partner' && req.method === 'POST') {
+      const b = await readBody(req);
+      const item = {
+        id: str(b.id, 20) || 'p' + Date.now().toString(36), name: str(b.name, 40), ip: str(b.ip, 80).toLowerCase(),
+        desc: str(b.desc, 140), tag: str(b.tag, 20), color: /^#[0-9a-f]{6}$/i.test(b.color || '') ? b.color : '',
+        url: httpUrl(b.url), hidden: !!b.hidden,
+      };
+      if (!item.name || !/^[a-z0-9.-]+(:\d{1,5})?$/.test(item.ip)) return json(res, 400, { error: 'Podaj nazwę i poprawne IP.' });
+      const i = db.promo.partners.findIndex((x) => x.id === item.id);
+      if (i >= 0) db.promo.partners[i] = item; else db.promo.partners.push(item);
+      ctx.save();
+      return json(res, 200, item);
+    }
+    if (p === '/admin/api/promo/ad' && req.method === 'POST') {
+      const b = await readBody(req);
+      const days = Number(b.days) || 0;
+      const item = {
+        id: str(b.id, 20) || 'a' + Date.now().toString(36), title: str(b.title, 60), text: str(b.text, 160),
+        image: httpUrl(b.image), url: httpUrl(b.url), cta: str(b.cta, 24),
+        until: days > 0 ? Date.now() + days * 864e5 : (Number(b.until) || 0), hidden: !!b.hidden,
+      };
+      if (!item.title) return json(res, 400, { error: 'Reklama musi mieć tytuł.' });
+      const i = db.promo.ads.findIndex((x) => x.id === item.id);
+      if (i >= 0) db.promo.ads[i] = item; else db.promo.ads.push(item);
+      ctx.save();
+      return json(res, 200, item);
+    }
+    if (p === '/admin/api/promo/reward' && req.method === 'POST') {
+      const b = await readBody(req);
+      if (!ctx.catalog.exists(b.cosmetic || '')) return json(res, 400, { error: 'Nieznana kosmetyka.' });
+      db.promo.creatorReward = b.cosmetic;
+      ctx.save();
+      return json(res, 200, { ok: true });
+    }
+    if (p === '/admin/api/promo/move' && req.method === 'POST') {
+      const b = await readBody(req);
+      const list = b.kind === 'ad' ? db.promo.ads : db.promo.partners;
+      const i = list.findIndex((x) => x.id === b.id), j = i + (b.dir < 0 ? -1 : 1);
+      if (i >= 0 && j >= 0 && j < list.length) { [list[i], list[j]] = [list[j], list[i]]; ctx.save(); }
+      return json(res, 200, { ok: true });
+    }
+    if (p.startsWith('/admin/api/promo/') && req.method === 'DELETE') {
+      const [kind, id] = p.slice('/admin/api/promo/'.length).split('/').map(decodeURIComponent);
+      if (kind === 'partner') db.promo.partners = db.promo.partners.filter((x) => x.id !== id);
+      if (kind === 'ad') db.promo.ads = db.promo.ads.filter((x) => x.id !== id);
+      ctx.save();
+      return json(res, 200, { ok: true });
+    }
+
+    // ---------- kody twórców ----------
+    db.creators ||= {};
+    if (p === '/admin/api/creators' && req.method === 'GET') {
+      return json(res, 200, Object.values(db.creators).map((c) => ({ ...c, uses: (c.uses || []).length }))
+        .sort((a, b) => b.uses - a.uses));
+    }
+    if (p === '/admin/api/creators' && req.method === 'POST') {
+      const b = await readBody(req);
+      const code = String(b.code || '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
+      if (code.length < 3) return json(res, 400, { error: 'Kod musi mieć min. 3 znaki (litery, cyfry, - i _).' });
+      if (db.codes[code]) return json(res, 400, { error: 'Taki kod na kosmetykę już istnieje.' });
+      const cosmetic = b.cosmetic && ctx.catalog.exists(b.cosmetic) ? b.cosmetic : null;
+      const old = db.creators[code];
+      db.creators[code] = { code, name: str(b.name, 40) || code, discordId: old?.discordId || null, cosmetic, uses: old?.uses || [], created: old?.created || Date.now() };
+      ctx.save();
+      return json(res, 200, db.creators[code]);
+    }
+    if (p.startsWith('/admin/api/creators/') && req.method === 'DELETE') {
+      delete db.creators[decodeURIComponent(p.slice('/admin/api/creators/'.length))];
       ctx.save();
       return json(res, 200, { ok: true });
     }
