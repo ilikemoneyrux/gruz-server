@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
@@ -30,10 +30,13 @@ const db = {
   creators: {}, // KOD -> { code, name, discordId, cosmetic, uses: [uuid], created } – kody twórców
   meta: {},     // { week, lastWeekly } – tygodniowy ranking
   metrics: { days: {}, today: null }, // aktywni gracze dziennie, szczyt online, wersje launchera (wykresy w panelu)
+  capes: {},    // id -> { id, pl, en, unlock, level, ver, created } – własne peleryny z panelu (obrazki osobno, capes.js)
+  shop: { token: '', items: {} }, // sklep Tebex: publiczny token i pakiet -> kosmetyka (shop.js)
+  purchases: [], // zakupy z webhooków Tebexa (najnowsze na początku)
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
   ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes'], ['promo.json', 'promo'], ['creators.json', 'creators'],
-  ['meta.json', 'meta'], ['metrics.json', 'metrics']];
+  ['meta.json', 'meta'], ['metrics.json', 'metrics'], ['capes.json', 'capes'], ['shop.json', 'shop'], ['purchases.json', 'purchases']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -260,6 +263,14 @@ const partyOf = new Map(); // uuid -> partyId
 
 function clientsOf(uuid) { return online.get(uuid) || new Set(); }
 function sendTo(uuid, msg) { for (const c of clientsOf(uuid)) c.send(msg); }
+/** Do wszystkich połączonych (launchery i gry) */
+function sendAll(msg) { for (const set of online.values()) for (const c of set) c.send(msg); }
+/** Własne peleryny z panelu admina (capes.js) – ustawiane przy starcie */
+let capesApi = null;
+/** Sklep Tebex (shop.js) – ustawiany przy starcie */
+let shopApi = null;
+/** Publiczny adres tego serwera (Render podaje go sam w RENDER_EXTERNAL_URL) */
+const publicUrl = (p) => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/+$/, '') + p;
 function isOnline(uuid) { return clientsOf(uuid).size > 0; }
 
 /** Status gracza (z gry ma pierwszeństwo nad launcherem) */
@@ -644,6 +655,12 @@ function consumeLinkCode(code) {
 
 // ---------------- obsługa wiadomości ----------------
 const handlers = {
+  // sklep: koszyk w Tebexie, launcher otwiera link do płatności w przeglądarce
+  async 'shop.buy'(c, m) {
+    if (c.kind !== 'launcher') return;
+    try { c.send({ t: 'shop.checkout', ...(await shopApi.buy(c, m.packageId)) }); }
+    catch (e) { console.warn('[shop]', e.message); c.send({ t: 'shop.error', code: String(e.message).startsWith('SHOP_') ? String(e.message).split(':')[0] : 'SHOP_TEBEX' }); }
+  },
   presence(c, m) {
     const state = String(m.state || 'launcher').slice(0, 20);
     const server = m.server ? String(m.server).slice(0, 80) : null;
@@ -983,6 +1000,18 @@ const server = http.createServer((req, res) => {
       creatorReward: p.creatorReward || 'cape:nebula',
     }));
   }
+  if (url.pathname === '/capes.json' || url.pathname.startsWith('/capes/')) {
+    if (!capesApi) { res.writeHead(503); return res.end(); }
+    capesApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
+      .catch((e) => { console.error('[capes]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
+    return;
+  }
+  if (url.pathname === '/shop.json' || url.pathname === '/shop/done' || url.pathname === '/tebex/webhook') {
+    if (!shopApi) { res.writeHead(503); return res.end(); }
+    shopApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
+      .catch((e) => { console.error('[shop]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
+    return;
+  }
   if (url.pathname === '/join') return joinPage(res, url);
   if (url.pathname === '/party') return partyPage(res, url);
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin.route(req, res, url, adminCtx);
@@ -1047,6 +1076,7 @@ wss.on('connection', (ws, req) => {
   const c = {
     ws, uuid: null, name: null, kind: 'launcher', presence: { state: 'launcher', since: now() },
     serverId: crypto.randomBytes(16).toString('hex'), alive: true, rate: { n: 0, at: now() },
+    ip: String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().replace(/^::ffff:/, ''), // do koszyka Tebex
     send(msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); },
   };
   ws.on('pong', () => { c.alive = true; });
@@ -1078,6 +1108,7 @@ wss.on('connection', (ws, req) => {
         markActive(who.uuid, c.kind === 'launcher' ? c.version : '');
         updateBadges(who.uuid);
         grantInviteRewards(user(who.uuid));
+        capesApi?.grantLevel(user(who.uuid));
         if (!online.has(c.uuid)) online.set(c.uuid, new Set());
         online.get(c.uuid).add(c);
         const today = db.metrics.days[dayKey()];
@@ -1124,6 +1155,14 @@ setInterval(() => {
   db.meta ||= {};
   db.metrics ||= { days: {}, today: null };
   db.metrics.days ||= {};
+  db.capes ||= {};
+  capesApi = require('./capes').setup({ db, save, levelOf, LOCKED, pushMe, sendTo, sendAll });
+  adminCtx.capes = capesApi;
+  db.shop ||= { token: '', items: {} };
+  db.purchases ||= [];
+  shopApi = require('./shop').setup({ db, save, user, sendTo, pushMe, catalog, publicUrl, LOCKED });
+  adminCtx.shop = shopApi;
+  levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)

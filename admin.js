@@ -360,6 +360,17 @@ async function route(req, res, url, ctx) {
       if (!r) return json(res, 404, { error: 'Nie ma takiego raportu.' });
       return json(res, 200, r);
     }
+    // ---------- sklep Tebex ----------
+    if (p === '/admin/api/shop' && req.method === 'GET') return json(res, 200, await ctx.shop.adminGet());
+    if (p === '/admin/api/shop' && req.method === 'POST') return json(res, 200, ctx.shop.adminSave(await readBody(req)));
+    if (p === '/admin/api/shop/assign' && req.method === 'POST') { const b = await readBody(req); return json(res, 200, ctx.shop.adminAssign(String(b.tx), String(b.nick))); }
+
+    // ---------- własne peleryny ----------
+    if (p === '/admin/api/capes' && req.method === 'GET') return json(res, 200, await ctx.capes.adminList());
+    if (p === '/admin/api/capes' && req.method === 'POST') return json(res, 200, await ctx.capes.adminSave(await readBody(req, 4 * 1024 * 1024)));
+    if (p === '/admin/api/capes/move' && req.method === 'POST') { const b = await readBody(req); return json(res, 200, await ctx.capes.adminMove(String(b.id), Number(b.dir))); }
+    if (p.startsWith('/admin/api/capes/') && req.method === 'DELETE') return json(res, 200, await ctx.capes.adminDelete(decodeURIComponent(p.slice('/admin/api/capes/'.length))));
+
     if (p === '/admin/api/news' && req.method === 'GET') return json(res, 200, db.news);
     if (p === '/admin/api/news' && req.method === 'POST') {
       const b = await readBody(req);

@@ -72,6 +72,16 @@
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; } @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
   .grid2 > .card { margin-bottom: 0; }
   label.blk { display: block; font-size: 12px; color: var(--mute); margin-top: 8px; } label.blk input, label.blk select, label.blk textarea { width: 100%; margin-top: 3px; }
+  .cape-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .cape-card { background: var(--rubble); padding: 12px; display: grid; gap: 8px; }
+  .cape-card canvas, #cp-prev { image-rendering: pixelated; background: #07050c; width: 100%; height: auto; display: block; }
+  .cape-card h3 { margin: 0; font-size: 15px; }
+  .cape-card .row { gap: 6px; }
+  .cape-form { display: grid; grid-template-columns: 1fr 260px; gap: 16px; }
+  .cape-form select, .cape-form input[type=number] { min-width: 140px; }
+  .drop { border: 1px dashed var(--seam); padding: 14px; text-align: center; color: var(--mute); cursor: pointer; }
+  .drop.over, .drop:hover { border-color: var(--neon); color: var(--text); }
+  @media (max-width: 760px) { .cape-form { grid-template-columns: 1fr; } }
   .two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .two label, .one label { display: block; font-size: 12px; color: var(--mute); }
   .two input, .one input { width: 100%; }
@@ -116,6 +126,8 @@
       <button data-tab="growth">Wykresy</button>
       <button data-tab="users">Gracze</button>
       <button data-tab="codes">Kody</button>
+      <button data-tab="capes">Peleryny</button>
+      <button data-tab="shop">Sklep</button>
       <button data-tab="news">Newsy</button>
       <button data-tab="promo">Partnerzy i reklamy</button>
       <button data-tab="creators">Twórcy</button>
@@ -200,6 +212,77 @@
       <p class="muted" id="c-made"></p>
     </div>
     <div class="card"><h2>Kody</h2><table><thead><tr><th>Kod</th><th>Kosmetyka</th><th>Użycia</th><th>Notatka</th><th></th></tr></thead><tbody id="codes"></tbody></table></div>
+  </section>
+
+  <section data-panel="capes" hidden>
+    <div class="card">
+      <h2 id="cp-title">Nowa peleryna</h2>
+      <p class="muted">Peleryna pojawia się od razu w launcherze (Szafa) i w grze – bez nowej wersji. Obrazek: PNG w proporcjach 2:1
+        (64x32, 512x256 albo 1024x512), w układzie zwykłej peleryny Minecrafta. Najłatwiej przemalować wzór:
+        <a href="/capes/ocean.png" download="wzor-peleryny.png" style="color:var(--hot)">pobierz wzór 1024x512</a>.</p>
+      <div class="cape-form">
+        <div>
+          <div class="two">
+            <label>Nazwa (PL)<input id="cp-pl" maxlength="40" placeholder="Smocza łuska" /></label>
+            <label>Name (EN)<input id="cp-en" maxlength="40" placeholder="Dragon scale" /></label>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <label class="muted">Kto ją dostanie
+              <select id="cp-unlock">
+                <option value="locked">Za kod / giveaway / nagrodę</option>
+                <option value="free">Za darmo dla wszystkich</option>
+                <option value="level">Od poziomu…</option>
+              </select></label>
+            <label class="muted" id="cp-level-box" hidden>Poziom<input id="cp-level" type="number" min="2" max="200" value="10" style="width:90px" /></label>
+          </div>
+          <label class="drop" id="cp-drop" style="margin-top:10px;display:block">
+            <input type="file" id="cp-file" accept="image/png" hidden />
+            <span id="cp-drop-text">Kliknij albo przeciągnij tu plik PNG</span>
+          </label>
+          <div class="row" style="margin-top:10px">
+            <button class="btn" id="cp-save">Dodaj pelerynę</button>
+            <button class="ghost" id="cp-cancel" hidden>Anuluj edycję</button>
+            <span class="err" id="cp-err"></span><span class="muted" id="cp-ok"></span>
+          </div>
+          <p class="muted" style="margin-top:10px">„Za kod / giveaway / nagrodę” – wybierzesz ją potem w zakładce Kody, w giveawayu na Discordzie,
+            w nagrodach za zaproszenia, serię zadań i ranking tygodnia. „Od poziomu” – gracz dostaje ją sam, gdy dobije do poziomu (też ci, którzy już go mają).</p>
+        </div>
+        <div><canvas id="cp-prev" width="220" height="176"></canvas><p class="muted" style="font-size:12px;margin:6px 0 0">Podgląd: przód i tył</p></div>
+      </div>
+    </div>
+    <div class="card"><h2>Twoje peleryny</h2><div class="cape-grid" id="capes"></div></div>
+  </section>
+
+  <section data-panel="shop" hidden>
+    <div class="card">
+      <h2>Sklep (Tebex)</h2>
+      <p class="muted">Gracze kupują kosmetyki w launcherze (Szafa → Sklep), płacą na stronie Tebexa (BLIK, karta, PayPal), a kosmetyka
+        odblokowuje się sama. Tebex jest sprzedawcą – rozlicza VAT, zwroty i chargebacki. Przy zwrocie albo chargebacku kosmetyka jest zabierana.</p>
+      <ol class="muted" style="line-height:1.9;margin:10px 0 14px;padding-left:20px">
+        <li>Załóż sklep na <a href="https://creator.tebex.io" target="_blank" rel="noopener" style="color:var(--hot)">creator.tebex.io</a> (typ: <b>Minecraft: Java Edition</b>). Dodaj pakiety – jeden pakiet = jedna kosmetyka (bez komend).</li>
+        <li><b>Developers → API Keys</b>: skopiuj <b>Public Token</b> i wklej poniżej. Klucza prywatnego (Private Key) nie potrzebujemy – nie wklejaj go nigdzie.</li>
+        <li><b>Developers → Webhooks → Endpoints</b>: dodaj adres <span class="code" id="sh-hook">…</span> z wydarzeniami
+          <span class="code">payment.completed</span>, <span class="code">payment.refunded</span>, <span class="code">payment.dispute.lost</span>.</li>
+        <li>Sekret webhooka z Tebexa wpisz na Renderze jako zmienną <span class="code">TEBEX_WEBHOOK_SECRET</span> (Environment) i zrób restart. Potem w Tebexie kliknij <b>Validate</b>.</li>
+        <li>Przypisz pakiety do kosmetyk w tabeli niżej i zapisz.</li>
+      </ol>
+      <div class="row">
+        <input id="sh-token" placeholder="Public Token, np. abcd-1234…" style="min-width:320px" />
+        <button class="btn" id="sh-token-save">Zapisz token</button>
+        <span id="sh-secret"></span>
+        <span class="err" id="sh-err"></span><span class="muted" id="sh-ok"></span>
+      </div>
+    </div>
+    <div class="card"><h2>Sprzedaż</h2><div class="grid" id="sh-stats"></div></div>
+    <div class="card">
+      <h2>Pakiety z Tebexa → kosmetyki</h2>
+      <table><thead><tr><th>Pakiet</th><th>Cena</th><th>Co dostaje gracz</th></tr></thead><tbody id="sh-packages"></tbody></table>
+      <div class="row" style="margin-top:10px"><button class="btn" id="sh-save">Zapisz przypisania</button><button class="ghost" id="sh-reload">Odśwież z Tebexa</button></div>
+      <p class="muted">Pakiety bez przypisanej kosmetyki nie są widoczne w launcherze. Cenę, nazwę i promocje zmieniasz w Tebexie.</p>
+    </div>
+    <div class="card"><h2>Ostatnie zakupy</h2>
+      <table><thead><tr><th>Kiedy</th><th>Gracz</th><th>Pakiet</th><th>Kwota</th><th>Status</th><th></th></tr></thead><tbody id="sh-purchases"></tbody></table>
+    </div>
   </section>
 
   <section data-panel="news" hidden>
@@ -411,7 +494,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, capes: loadCapes, shop: loadShop, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -474,6 +557,145 @@
     if (!code || !confirm('Usunąć kod ' + code + '?')) return;
     await api('codes/' + encodeURIComponent(code), { method: 'DELETE' });
     loadCodes();
+  });
+
+  // ---------- sklep Tebex ----------
+  let shop = null;
+  const ST = { paid: ['opłacone', 'on'], refund: ['zwrot', 'ban'], chargeback: ['chargeback', 'ban'], 'no-player': ['brak gracza', 'ban'], 'no-cosmetic': ['brak kosmetyki', 'ban'] };
+  const shopMsg = (id, text, err) => { $(id).textContent = text; if (!err) setTimeout(() => { $(id).textContent = ''; }, 4000); };
+  async function loadShop() {
+    $('#sh-err').textContent = '';
+    shop = await api('shop');
+    $('#sh-hook').textContent = shop.webhookUrl;
+    $('#sh-token').value = shop.token;
+    $('#sh-token').disabled = shop.tokenFromEnv;
+    if (shop.tokenFromEnv) $('#sh-token').placeholder = 'Ustawiony w TEBEX_PUBLIC_TOKEN';
+    $('#sh-secret').innerHTML = shop.secretSet ? '<span class="pill on">sekret webhooka ustawiony</span>' : '<span class="pill ban">brak TEBEX_WEBHOOK_SECRET – zakupy nie będą się odblokowywać</span>';
+    if (shop.error) $('#sh-err').textContent = shop.error;
+    const rev = Object.entries(shop.revenue).map(([c, a]) => `${a} ${c}`).join(' + ') || '0';
+    $('#sh-stats').innerHTML = [['Zakupów', shop.count], ['Przychód (brutto)', rev], ['Pakietów w sklepie', shop.packages.filter((p) => p.cosmetic).length]]
+      .map(([k, v]) => `<div class="stat"><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join('');
+    const opts = (sel) => `<option value="">— nie sprzedawaj —</option>` + shop.cosmetics.map((c) => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${esc(c)}</option>`).join('');
+    $('#sh-packages').innerHTML = shop.packages.map((p) => `<tr data-pkg="${esc(p.id)}"><td><b>${esc(p.name)}</b> <span class="muted">#${esc(p.id)}${p.category ? ' · ' + esc(p.category) : ''}</span></td>
+      <td>${esc(p.price)} ${esc(p.currency)}${p.discount ? ` <span class="pill on">-${esc(p.discount)}</span>` : ''}</td><td><select>${opts(p.cosmetic)}</select></td></tr>`).join('')
+      || `<tr><td colspan="3" class="muted">${shop.token || shop.tokenFromEnv ? 'W sklepie Tebex nie ma jeszcze pakietów.' : 'Najpierw wklej Public Token.'}</td></tr>`;
+    $('#sh-purchases').innerHTML = shop.purchases.map((x) => `<tr data-tx="${esc(x.tx)}"><td class="muted">${new Date(x.at).toLocaleString('pl-PL')}</td>
+      <td>${esc(x.player || '?')}</td><td>${esc(x.name)}${x.cosmetic ? ` <span class="muted">(${esc(x.cosmetic)})</span>` : ''}</td>
+      <td>${x.amount != null ? esc(x.amount) + ' ' + esc(x.currency || '') : ''}</td><td><span class="pill ${(ST[x.status] || ['', ''])[1]}">${esc((ST[x.status] || [x.status])[0])}</span></td>
+      <td>${x.status === 'no-player' ? '<button class="ghost" data-assign>Przypisz graczowi</button>' : ''}</td></tr>`).join('')
+      || '<tr><td colspan="6" class="muted">Jeszcze nikt nic nie kupił.</td></tr>';
+  }
+  $('#sh-token-save').addEventListener('click', async () => {
+    try { await api('shop', { method: 'POST', body: { token: $('#sh-token').value } }); shopMsg('#sh-ok', 'Zapisano ✓'); await loadShop(); }
+    catch (err) { shopMsg('#sh-err', err.message, true); }
+  });
+  $('#sh-save').addEventListener('click', async () => {
+    const items = {};
+    document.querySelectorAll('#sh-packages tr[data-pkg]').forEach((tr) => { const v = tr.querySelector('select').value; if (v) items[tr.dataset.pkg] = v; });
+    try { await api('shop', { method: 'POST', body: { items } }); shopMsg('#sh-ok', 'Zapisano ✓'); await loadShop(); }
+    catch (err) { shopMsg('#sh-err', err.message, true); }
+  });
+  $('#sh-reload').addEventListener('click', () => loadShop().catch((e) => shopMsg('#sh-err', e.message, true)));
+  $('#sh-purchases').addEventListener('click', async (e) => {
+    if (e.target.dataset.assign === undefined) return;
+    const nick = prompt('Nick gracza w Gruz Client, któremu dać ten zakup:');
+    if (!nick) return;
+    try { await api('shop/assign', { method: 'POST', body: { tx: e.target.closest('tr').dataset.tx, nick } }); await loadShop(); }
+    catch (err) { alert(err.message); }
+  });
+
+  // ---------- własne peleryny ----------
+  let capeImg = null, capeData = '', capeEdit = null, capeList = [];
+  const UNLOCK = { free: 'za darmo', locked: 'kod / nagroda', level: 'od poziomu' };
+  /** Rysuje przód (lewo) i tył (prawo) peleryny – w układzie Minecrafta przód to x 1–11, tył 12–22, y 1–17 (skala /64) */
+  function drawCapePreview(canvas, img) {
+    const g = canvas.getContext('2d');
+    g.imageSmoothingEnabled = false;
+    g.clearRect(0, 0, canvas.width, canvas.height);
+    if (!img) return;
+    const k = img.width / 64, w = canvas.width / 2 - 6, h = w * 1.6;
+    g.drawImage(img, 1 * k, 1 * k, 10 * k, 16 * k, 2, (canvas.height - h) / 2, w, h);
+    g.drawImage(img, 12 * k, 1 * k, 10 * k, 16 * k, canvas.width / 2 + 4, (canvas.height - h) / 2, w, h);
+  }
+  function capeForm(c) {
+    capeEdit = c || null;
+    capeData = ''; capeImg = null;
+    $('#cp-title').textContent = c ? 'Edytuj pelerynę: ' + c.pl : 'Nowa peleryna';
+    $('#cp-pl').value = c?.pl || ''; $('#cp-en').value = c?.en || '';
+    $('#cp-unlock').value = c?.unlock || 'locked'; $('#cp-level').value = c?.level || 10;
+    $('#cp-level-box').hidden = $('#cp-unlock').value !== 'level';
+    $('#cp-save').textContent = c ? 'Zapisz zmiany' : 'Dodaj pelerynę';
+    $('#cp-cancel').hidden = !c;
+    $('#cp-drop-text').textContent = c ? 'Nowy obrazek (opcjonalnie) – kliknij albo przeciągnij PNG' : 'Kliknij albo przeciągnij tu plik PNG';
+    $('#cp-err').textContent = '';
+    const prev = $('#cp-prev');
+    if (c) { const im = new Image(); im.onload = () => drawCapePreview(prev, im); im.src = c.url; } else drawCapePreview(prev, null);
+  }
+  function capeFile(f) {
+    $('#cp-err').textContent = '';
+    if (!f) return;
+    if (f.type !== 'image/png') { $('#cp-err').textContent = 'To musi być plik PNG.'; return; }
+    if (f.size > 2 * 1024 * 1024) { $('#cp-err').textContent = 'Plik jest za duży (max 2 MB).'; return; }
+    const rd = new FileReader();
+    rd.onload = () => {
+      const im = new Image();
+      im.onload = () => {
+        if (im.width !== im.height * 2 || im.width < 64 || (im.width & (im.width - 1))) {
+          $('#cp-err').textContent = `Zły rozmiar ${im.width}x${im.height}. Musi być 2:1, np. 64x32, 512x256, 1024x512.`; return;
+        }
+        capeImg = im; capeData = rd.result;
+        $('#cp-drop-text').textContent = `${f.name} · ${im.width}x${im.height}`;
+        drawCapePreview($('#cp-prev'), im);
+      };
+      im.src = rd.result;
+    };
+    rd.readAsDataURL(f);
+  }
+  $('#cp-file').addEventListener('change', (e) => capeFile(e.target.files[0]));
+  const drop = $('#cp-drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); capeFile(e.dataTransfer.files[0]); });
+  $('#cp-unlock').addEventListener('change', () => { $('#cp-level-box').hidden = $('#cp-unlock').value !== 'level'; });
+  $('#cp-cancel').addEventListener('click', () => capeForm(null));
+  $('#cp-save').addEventListener('click', async () => {
+    $('#cp-err').textContent = '';
+    const b = $('#cp-save');
+    b.disabled = true;
+    try {
+      const r = await api('capes', { method: 'POST', body: {
+        id: capeEdit?.id, pl: $('#cp-pl').value, en: $('#cp-en').value, unlock: $('#cp-unlock').value, level: $('#cp-level').value, image: capeData || undefined,
+      } });
+      $('#cp-ok').textContent = capeEdit ? 'Zapisano ✓' : `Dodano ✓ (${r.id})`;
+      setTimeout(() => { $('#cp-ok').textContent = ''; }, 4000);
+      $('#cp-file').value = '';
+      capeForm(null);
+      await loadCapes();
+    } catch (err) { $('#cp-err').textContent = err.message; } finally { b.disabled = false; }
+  });
+  async function loadCapes() {
+    capeList = await api('capes');
+    $('#capes').innerHTML = capeList.map((c, i) => `<div class="cape-card" data-id="${esc(c.id)}">
+      <canvas width="220" height="176" data-src="${esc(c.url)}"></canvas>
+      <div><h3>${esc(c.pl)}</h3><span class="muted">${esc(c.en)} · <span class="code">${esc(c.id)}</span></span></div>
+      <div><span class="pill ${c.unlock === 'free' ? 'on' : ''}">${UNLOCK[c.unlock]}${c.unlock === 'level' ? ' ' + c.level : ''}</span>
+        <span class="pill">ma ${c.owners}</span><span class="pill">nosi ${c.wearing}</span></div>
+      <div class="row"><button class="ghost" data-cmove="-1" ${i ? '' : 'disabled'}>↑</button><button class="ghost" data-cmove="1" ${i < capeList.length - 1 ? '' : 'disabled'}>↓</button>
+        <button class="ghost" data-cedit>Edytuj</button><button class="ghost danger" data-cdel>Usuń</button></div>
+    </div>`).join('') || '<p class="muted">Nie masz jeszcze własnych peleryn. Dodaj pierwszą powyżej.</p>';
+    document.querySelectorAll('#capes canvas[data-src]').forEach((cv) => { const im = new Image(); im.onload = () => drawCapePreview(cv, im); im.src = cv.dataset.src; });
+  }
+  $('#capes').addEventListener('click', async (e) => {
+    const card = e.target.closest('.cape-card');
+    if (!card) return;
+    const c = capeList.find((x) => x.id === card.dataset.id);
+    if (e.target.dataset.cedit !== undefined) { capeForm(c); window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+    if (e.target.dataset.cmove) { await api('capes/move', { method: 'POST', body: { id: c.id, dir: Number(e.target.dataset.cmove) } }); return loadCapes(); }
+    if (e.target.dataset.cdel !== undefined) {
+      if (!confirm(`Usunąć pelerynę „${c.pl}”? Zniknie z launchera i gry, a ${c.owners} graczy ją straci. Kody na nią też zostaną usunięte.`)) return;
+      await api('capes/' + encodeURIComponent(c.id), { method: 'DELETE' });
+      loadCapes();
+    }
   });
 
   async function loadNews() {

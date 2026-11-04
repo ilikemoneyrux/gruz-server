@@ -60,4 +60,23 @@ async function delVoice(id) {
   fs.rmSync(path.join(DATA, 'voice', id + '.webm'), { force: true });
 }
 
-module.exports = { init, load, save, putVoice, getVoice, delVoice, DATA };
+// ---------------- obrazki (np. własne peleryny): baza jako base64 albo plik data/<rodzaj>/<id>.png ----------------
+const blobFile = (kind, id) => path.join(DATA, kind, path.basename(id) + '.png');
+async function putBlob(kind, id, buf) {
+  if (pool) return put(`${kind}:${id}`, buf.toString('base64'));
+  fs.mkdirSync(path.join(DATA, kind), { recursive: true });
+  fs.writeFileSync(blobFile(kind, id), buf);
+}
+async function getBlob(kind, id) {
+  if (pool) {
+    const r = await pool.query('SELECT v FROM gruz_kv WHERE k = $1', [`${kind}:${id}`]);
+    return r.rows.length ? Buffer.from(r.rows[0].v, 'base64') : null;
+  }
+  try { return fs.readFileSync(blobFile(kind, id)); } catch { return null; }
+}
+async function delBlob(kind, id) {
+  if (pool) { await pool.query('DELETE FROM gruz_kv WHERE k = $1', [`${kind}:${id}`]); return; }
+  fs.rmSync(blobFile(kind, id), { force: true });
+}
+
+module.exports = { init, load, save, putVoice, getVoice, delVoice, putBlob, getBlob, delBlob, DATA };

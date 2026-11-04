@@ -175,6 +175,8 @@ module.exports = function startDiscord(ctx) {
     const lang = cfg().lang === 'pl' ? 'pl' : 'en';
     if (key === 'all') return lang === 'pl' ? 'Wszystkie kosmetyki' : 'All cosmetics';
     const [slot, v] = key.split(':');
+    const own = ctx.catalog?.customName?.(key, lang); // własna peleryna z panelu – nazwa z panelu
+    if (own) return lang === 'pl' ? `${SLOT.pl[slot]} ${own}` : `${own} ${SLOT.en[slot].toLowerCase()}`;
     return lang === 'pl' ? `${SLOT.pl[slot]} ${cap(v)}` : `${cap(v)} ${SLOT.en[slot].toLowerCase()}`;
   };
   const hoursText = (ms) => { const h = (ms || 0) / 36e5; return t('hours', { h: h >= 10 ? Math.round(h) : h.toFixed(1) }); };

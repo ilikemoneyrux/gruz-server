@@ -46,4 +46,27 @@ function activeSeason(now = new Date()) {
   return null;
 }
 
-module.exports = { CATALOG, FREE, SEASONS, ALL, exists, allowed, activeSeason };
+// ---------------- własne peleryny z panelu admina (capes.js) ----------------
+// Dopisujemy je do tych samych tablic (bez podmiany), bo inne moduły trzymają do nich referencje.
+const BASE_CAPES = [...CATALOG.cape];
+const BASE_FREE = [...FREE];
+/** id -> { id, pl, en, unlock: 'free' | 'locked' | 'level', level, ver } */
+const custom = {};
+function setCustom(list) {
+  for (const k of Object.keys(custom)) delete custom[k];
+  for (const c of list) custom[c.id] = c;
+  CATALOG.cape.length = 0;
+  CATALOG.cape.push(...BASE_CAPES, ...list.map((c) => c.id));
+  FREE.length = 0;
+  FREE.push(...BASE_FREE, ...list.filter((c) => c.unlock === 'free').map((c) => `cape:${c.id}`));
+  ALL.length = 0;
+  ALL.push(...Object.entries(CATALOG).flatMap(([slot, l]) => l.map((v) => `${slot}:${v}`)));
+}
+/** Nazwa własnej peleryny w danym języku albo null (dla wbudowanych) */
+function customName(key, lang = 'en') {
+  const [slot, v] = String(key).split(':');
+  const c = slot === 'cape' && custom[v];
+  return c ? (lang === 'pl' ? c.pl : c.en || c.pl) : null;
+}
+
+module.exports = { CATALOG, FREE, SEASONS, ALL, exists, allowed, activeSeason, BASE_CAPES, custom, setCustom, customName };

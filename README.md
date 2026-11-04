@@ -53,6 +53,25 @@ Bez `GRUZ_ADMIN_PASSWORD` panel jest wyłączony.
 
 W launcherze wpisz adres w **Ustawienia → Społeczność**, np. `wss://gruz.twojadomena.pl`. Do testów na swoim komputerze wystarczy `ws://localhost:8787`.
 
+## Własne peleryny (od 1.7.0)
+
+Panel → **Peleryny**: wgrywasz PNG (proporcje 2:1, np. 1024x512, układ zwykłej peleryny Minecrafta), wpisujesz nazwę PL/EN
+i wybierasz, kto ją dostaje: **za darmo**, **za kod / giveaway / nagrodę** (pojawia się wtedy w Kodach, giveawayach i nagrodach)
+albo **od poziomu N** (gracz dostaje ją sam). Launcher (0.6.2+) i mod (0.5.2+) pobierają listę z `/capes.json`,
+a obrazki z `/capes/<id>.png` – bez nowej wersji. Obrazki są w bazie (klucz `capes:<id>`) albo w `data/capes/`.
+
+## Sklep (Tebex, od 1.7.0)
+
+Panel → **Sklep**: wklejasz *Public Token* sklepu Tebex i przypisujesz pakiety do kosmetyk. Gracz klika „Kup” w Szafie,
+serwer tworzy koszyk w Tebex Headless API (nick + uuid gracza), płatność jest na stronie Tebexa, a webhook
+`POST /tebex/webhook` (podpis `X-Signature` sprawdzany sekretem) odblokowuje kosmetykę. Zwrot / chargeback / przegrany spór ją zabiera.
+
+| Zmienna | Opis |
+|---|---|
+| `TEBEX_WEBHOOK_SECRET` | sekret webhooka z Tebexa (Developers → Webhooks) – **wymagany**, bez niego zakupy się nie odblokują |
+| `TEBEX_PUBLIC_TOKEN` | opcjonalnie zamiast wpisywania tokenu w panelu |
+| `PUBLIC_URL` | adres serwera do linków powrotnych (na Renderze nie trzeba – jest `RENDER_EXTERNAL_URL`) |
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

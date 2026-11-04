@@ -165,6 +165,12 @@ async function mojangProfile(nick) {
 }
 
 async function capeImage(style) {
+  const own = require('../catalog').custom[style]; // własna peleryna z panelu admina (obrazek w bazie)
+  if (own) {
+    const key = `${style}@${own.ver}`;
+    if (!capeCache.has(key)) capeCache.set(key, require('../storage').getBlob('capes', style).then((b) => (b ? loadImage(b) : null)).catch(() => null));
+    return capeCache.get(key);
+  }
   if (!HD_CAPES.includes(style)) return null;
   if (!capeCache.has(style)) capeCache.set(style, loadImage(A(`capes/${style}.png`)).catch(() => null));
   return capeCache.get(style);
@@ -221,7 +227,8 @@ function drawCape(ctx, img, style, ox, oy, s) {
   ctx.shadowBlur = 18;
   ctx.shadowOffsetY = 6;
   if (img) {
-    ctx.drawImage(img, 16, 16, 160, 256, x, y, w, h);
+    const k = img.width / 64; // 64x32 albo większa w tej samej proporcji (HD 1024x512 -> k = 16)
+    ctx.drawImage(img, k, k, 10 * k, 16 * k, x, y, w, h);
   } else {
     const [a, b] = ANIM_CAPES[style] || ['#b45cff', '#3a1a66'];
     const g = ctx.createLinearGradient(x, y, x + w, y + h);
