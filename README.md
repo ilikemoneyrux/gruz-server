@@ -71,6 +71,13 @@ serwer tworzy koszyk w Tebex Headless API (nick + uuid gracza), płatność jest
 | `TEBEX_WEBHOOK_SECRET` | sekret webhooka z Tebexa (Developers → Webhooks) – **wymagany**, bez niego zakupy się nie odblokują |
 | `TEBEX_PUBLIC_TOKEN` | opcjonalnie zamiast wpisywania tokenu w panelu |
 | `PUBLIC_URL` | adres serwera do linków powrotnych (na Renderze nie trzeba – jest `RENDER_EXTERNAL_URL`) |
+| `SHOP_SITE_URL` | strona sklepu, na którą Tebex wraca po zakupie ze strony (domyślnie `https://gruzclient.com/shop`) |
+| `SHOP_ORIGINS` | dodatkowe adresy strony, które mogą tworzyć koszyki (po przecinku); gruzclient.com, www i podglądy `*.gruz-website.pages.dev` są dozwolone zawsze |
+
+**Od 1.7.1 – sklep na stronie gruzclient.com/shop.** Gracz wpisuje nick (musi choć raz zalogować się w launcherze), serwer tworzy ten sam koszyk co dla launchera.
+Publiczne API: `GET /shop/player?name=NICK` (nick, uuid, posiadane kosmetyki ze sklepu), `POST /shop/checkout` `{name, packageId}` → `{url}`
+(tylko z dozwolonych adresów, limit 8 koszyków / 10 min z jednego IP), `GET /shop/cape/<id>.png` (podgląd wbudowanych peleryn).
+Sklep typu *Universal (No Auth)* nie przyjmuje nicku w koszyku – serwer wysyła nick tylko, gdy sklep go obsługuje; gracza rozpoznaje po `uuid` w `custom`.
 
 ## Darmowy hosting: Render + Neon
 
@@ -104,6 +111,8 @@ Bot działa razem z serwerem Gruz. Domyślnie mówi po angielsku (`/gruzadmin co
 - `config ranking-channel`: kanał, na który w każdy poniedziałek trafia ranking tygodnia; `ranking` wysyła obecny ranking od razu,
 - `config crashes-channel`: raporty crashy z launchera; gracz może też kliknąć **„Poproś o pomoc”** – bot otwiera mu prywatny ticket z logiem (wymaga połączonego konta),
 - `wipe`: usuwa wszystkie kanały poza kanałami bota.
+
+**`/shop-codes cosmetic amount [note]`** (tylko admin): tworzy `amount` (1–1000) jednorazowych kodów na kosmetykę i wysyła Ci (widoczne tylko dla Ciebie) plik **.csv** w formacie kluczy licencyjnych Tebexa (`KOD,` w każdej linii, bez nagłówka) – do wgrania w pakiecie Tebexa. Kody mają w panelu notatkę z nazwą paczki (`shop-RRRR-MM-DD-xxxxxx`). Gracz wpisuje kod w launcherze (Szafa).
 
 1. https://discord.com/developers/applications → **New Application** → zakładka **Bot** → **Reset Token** → skopiuj token.
 2. **OAuth2 → URL Generator**: zaznacz `bot` i `applications.commands`, w uprawnieniach **Administrator** (najprościej) albo: `Manage Channels`, `Manage Roles`, `Send Messages`, `Embed Links`, `Attach Files`, `Read Message History`, `View Channels`. Otwórz link i dodaj bota na serwer.

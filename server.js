@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
@@ -1006,7 +1006,7 @@ const server = http.createServer((req, res) => {
       .catch((e) => { console.error('[capes]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
     return;
   }
-  if (url.pathname === '/shop.json' || url.pathname === '/shop/done' || url.pathname === '/tebex/webhook') {
+  if (url.pathname === '/shop.json' || url.pathname.startsWith('/shop/') || url.pathname === '/tebex/webhook') {
     if (!shopApi) { res.writeHead(503); return res.end(); }
     shopApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
       .catch((e) => { console.error('[shop]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
@@ -1160,7 +1160,7 @@ setInterval(() => {
   adminCtx.capes = capesApi;
   db.shop ||= { token: '', items: {} };
   db.purchases ||= [];
-  shopApi = require('./shop').setup({ db, save, user, sendTo, pushMe, catalog, publicUrl, LOCKED });
+  shopApi = require('./shop').setup({ db, save, user, byName, sendTo, pushMe, catalog, publicUrl, LOCKED });
   adminCtx.shop = shopApi;
   levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();

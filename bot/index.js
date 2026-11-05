@@ -2,6 +2,7 @@
 //
 // /gruz       – dla wszystkich: player, online, top, skin, server, servers
 // /gruzadmin  – dla adminów:     giveaway, code, tickets, verify, config, wipe
+// /shop-codes – dla adminów:     paczka jednorazowych kodów na kosmetykę + plik CSV (do sprzedaży kodów)
 //
 // Ustawienia bota (język, kanały, kategorie ticketów, giveawaye…) trzymamy w db.discord,
 // więc przetrwają restart serwera.
@@ -136,6 +137,19 @@ const adminCmd = new SlashCommandBuilder()
       .addStringOption((o) => o.setName('message_id').setDescription('Event message ID').setRequired(true))))
   .addSubcommand((s) => s.setName('release').setDescription('Announce the latest Gruz Client release in the updates channel now'))
   .addSubcommand((s) => s.setName('wipe').setDescription('Delete every channel except the bot channels'));
+
+// /shop-codes – paczka jednorazowych kodów na kosmetykę do sprzedaży (np. w Tebexie) + plik CSV tylko dla admina
+const shopCodesCmd = new SlashCommandBuilder()
+  .setName('shop-codes').setDescription('Generate single-use cosmetic codes to sell (sends you a CSV file)')
+  .setDefaultMemberPermissions(P.Administrator).setDMPermission(false)
+  .addStringOption(cosmeticOpt)
+  .addIntegerOption((o) => o.setName('amount').setDescription('How many codes (1–1000)').setRequired(true).setMinValue(1).setMaxValue(1000))
+  .addStringOption((o) => o.setName('note').setDescription('Note for the admin panel (e.g. Tebex package name)').setMaxLength(60));
+
+/** Plik dokładnie jak szablon Tebexa (license-keys-template.csv): bez nagłówka, bez BOM i cudzysłowów, "KOD," w każdej linii, końce linii LF */
+function codesCsv(codes) {
+  return codes.map((c) => `${c},`).join('\n') + '\n';
+}
 
 const partnerCmd = new SlashCommandBuilder()
   .setName('gruzpartner').setDescription('Gruz Client – for partners and content creators').setDMPermission(false)
@@ -324,6 +338,29 @@ module.exports = function startDiscord(ctx) {
       } catch { msg += '\n' + t('codeDmFail', { user: `${target}` }); }
     }
     return reply(i, msg);
+  }
+
+  async function cmdShopCodes(i) {
+    const cosmetic = i.options.getString('cosmetic', true);
+    if (!ctx.LOCKED.includes(cosmetic)) return reply(i, t('unknownCosmetic'));
+    const amount = Math.min(1000, Math.max(1, i.options.getInteger('amount', true)));
+    await i.deferReply({ ephemeral: true });
+    const d = new Date();
+    const batch = `shop-${d.toISOString().slice(0, 10)}-${crypto.randomBytes(3).toString('hex')}`;
+    const note = `${batch}${i.options.getString('note') ? ' · ' + i.options.getString('note') : ''} · ${i.user.tag}`.slice(0, 80);
+    const name = cosmeticLabel(cosmetic);
+    const codes = [];
+    for (let k = 0; k < amount; k++) {
+      const code = makeCode(cosmetic, note, 1);
+      db.codes[code].batch = batch; // cała paczka razem – widać w panelu (Kody) po notatce
+      codes.push(code);
+    }
+    save();
+    console.log(`[discord] /shop-codes: ${amount} × ${cosmetic} (${batch}) przez ${i.user.tag}`);
+    return i.editReply({
+      content: t('shopCodesMade', { n: amount, c: name, batch }),
+      files: [new AttachmentBuilder(Buffer.from(codesCsv(codes), 'utf8'), { name: `tebex-keys-${cosmetic.replace(':', '-')}-${batch}.csv` })],
+    });
   }
 
   // ---------------- giveawaye ----------------
@@ -1537,6 +1574,10 @@ module.exports = function startDiscord(ctx) {
           if (sub === 'server') return cmdServer(i);
         }
         if (i.commandName === 'gruzpartner') return cmdPartner(i, i.options.getSubcommand());
+        if (i.commandName === 'shop-codes') {
+          if (!isAdmin(i)) return reply(i, t('adminOnly'));
+          return cmdShopCodes(i);
+        }
         if (i.commandName === 'gruzadmin') {
           if (!isAdmin(i)) return reply(i, t('adminOnly'));
           const group = i.options.getSubcommandGroup(false);
@@ -1612,7 +1653,7 @@ module.exports = function startDiscord(ctx) {
     try {
       const rest = new REST({ version: '10' }).setToken(token);
       const route = guildId ? Routes.applicationGuildCommands(client.user.id, guildId) : Routes.applicationCommands(client.user.id);
-      await rest.put(route, { body: [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON()] });
+      await rest.put(route, { body: [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON(), shopCodesCmd.toJSON()] });
       console.log('[discord] komendy zarejestrowane' + (guildId ? ' na serwerze' : ' globalnie (mogą pojawić się po godzinie)'));
     } catch (e) { console.error('[discord] rejestracja komend:', e.message); }
     updateStatus();
@@ -1629,4 +1670,5 @@ module.exports = function startDiscord(ctx) {
   return client;
 };
 
-module.exports.commands = () => [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON()];
+module.exports.codesCsv = codesCsv;
+module.exports.commands = () => [publicCmd.toJSON(), adminCmd.toJSON(), partnerCmd.toJSON(), shopCodesCmd.toJSON()];

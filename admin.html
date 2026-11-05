@@ -256,10 +256,11 @@
   <section data-panel="shop" hidden>
     <div class="card">
       <h2>Sklep (Tebex)</h2>
-      <p class="muted">Gracze kupują kosmetyki w launcherze (Szafa → Sklep), płacą na stronie Tebexa (BLIK, karta, PayPal), a kosmetyka
+      <p class="muted">Gracze kupują kosmetyki w launcherze (Szafa → Sklep) albo na stronie <a href="https://gruzclient.com/shop" target="_blank" rel="noopener" style="color:var(--hot)">gruzclient.com/shop</a> (po nicku – gracz musi choć raz zalogować się w launcherze), płacą na stronie Tebexa (BLIK, karta, PayPal), a kosmetyka
         odblokowuje się sama. Tebex jest sprzedawcą – rozlicza VAT, zwroty i chargebacki. Przy zwrocie albo chargebacku kosmetyka jest zabierana.</p>
       <ol class="muted" style="line-height:1.9;margin:10px 0 14px;padding-left:20px">
-        <li>Załóż sklep na <a href="https://creator.tebex.io" target="_blank" rel="noopener" style="color:var(--hot)">creator.tebex.io</a> (typ: <b>Minecraft: Java Edition</b>). Dodaj pakiety – jeden pakiet = jedna kosmetyka (bez komend).</li>
+        <li>Załóż sklep na <a href="https://creator.tebex.io" target="_blank" rel="noopener" style="color:var(--hot)">creator.tebex.io</a> (typ <b>Universal (No Auth)</b> albo Minecraft: Java Edition – oba działają). Dodaj pakiety – jeden pakiet = jedna kosmetyka (bez komend), najlepiej z obrazkiem – pokaże się na stronie sklepu.</li>
+        <li>Sklep w Tebexie musi być <b>włączony</b> (status niżej). Póki jest wyłączony, Tebex nie przyjmie płatności.</li>
         <li><b>Developers → API Keys</b>: skopiuj <b>Public Token</b> i wklej poniżej. Klucza prywatnego (Private Key) nie potrzebujemy – nie wklejaj go nigdzie.</li>
         <li><b>Developers → Webhooks → Endpoints</b>: dodaj adres <span class="code" id="sh-hook">…</span> z wydarzeniami
           <span class="code">payment.completed</span>, <span class="code">payment.refunded</span>, <span class="code">payment.dispute.lost</span>.</li>
@@ -269,7 +270,7 @@
       <div class="row">
         <input id="sh-token" placeholder="Public Token, np. abcd-1234…" style="min-width:320px" />
         <button class="btn" id="sh-token-save">Zapisz token</button>
-        <span id="sh-secret"></span>
+        <span id="sh-secret"></span> <span id="sh-store"></span>
         <span class="err" id="sh-err"></span><span class="muted" id="sh-ok"></span>
       </div>
     </div>
@@ -571,6 +572,10 @@
     $('#sh-token').disabled = shop.tokenFromEnv;
     if (shop.tokenFromEnv) $('#sh-token').placeholder = 'Ustawiony w TEBEX_PUBLIC_TOKEN';
     $('#sh-secret').innerHTML = shop.secretSet ? '<span class="pill on">sekret webhooka ustawiony</span>' : '<span class="pill ban">brak TEBEX_WEBHOOK_SECRET – zakupy nie będą się odblokowywać</span>';
+    const st = shop.store;
+    $('#sh-store').innerHTML = !st ? '' : st.disabled
+      ? `<span class="pill ban">sklep Tebex „${esc(st.name)}” jest WYŁĄCZONY – włącz go w Tebexie</span>`
+      : `<span class="pill on">sklep „${esc(st.name)}” włączony · ${esc(st.type)} · ${esc(st.currency)}</span>`;
     if (shop.error) $('#sh-err').textContent = shop.error;
     const rev = Object.entries(shop.revenue).map(([c, a]) => `${a} ${c}`).join(' + ') || '0';
     $('#sh-stats').innerHTML = [['Zakupów', shop.count], ['Przychód (brutto)', rev], ['Pakietów w sklepie', shop.packages.filter((p) => p.cosmetic).length]]

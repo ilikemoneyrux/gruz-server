@@ -41,6 +41,7 @@ const T = {
     codeSent: 'Sent to {user} in DMs. ✅',
     codeDmFail: 'I could not DM {user} (their DMs are closed). Give them the code yourself.',
     unknownCosmetic: 'Unknown cosmetic. Pick one from the list.',
+    shopCodesMade: '✅ Created **{n}** single-use codes for **{c}** (batch `{batch}`).\nThe **.csv** file is in the Tebex license keys format – upload it to the Tebex package where you got the license keys template. Only you can see this message – keep the codes secret until they are sold.\nPlayers redeem a code in the launcher: Wardrobe → “Got a code? Enter it here” → Redeem.',
     // giveaway
     gwTitle: '🎉 GIVEAWAY',
     gwBody: '**Prize:** {c}\n**Winners:** {w}\n**Ends:** {end} ({endAbs})\n**Hosted by:** {host}\n\nClick **Join** to enter!',
@@ -247,6 +248,7 @@ const T = {
     codeSent: 'Wysłano do {user} na priv. ✅',
     codeDmFail: 'Nie mogę napisać do {user} (ma zamknięte DM). Daj mu kod sam.',
     unknownCosmetic: 'Nieznana kosmetyka. Wybierz z listy.',
+    shopCodesMade: '✅ Utworzono **{n}** jednorazowych kodów na **{c}** (paczka `{batch}`).\nPlik **.csv** jest w formacie kluczy licencyjnych Tebexa – wgraj go w pakiecie Tebexa tam, skąd pobrałeś szablon kluczy. Tę wiadomość widzisz tylko Ty – trzymaj kody w tajemnicy, dopóki nie zostaną sprzedane.\nGracz wpisuje kod w launcherze: Szafa → „Masz kod? Wpisz go tutaj” → Odbierz.',
     gwTitle: '🎉 GIVEAWAY',
     gwBody: '**Nagroda:** {c}\n**Zwycięzców:** {w}\n**Koniec:** {end} ({endAbs})\n**Organizuje:** {host}\n\nKliknij **Dołącz**, żeby wziąć udział!',
     gwEndedBody: '**Nagroda:** {c}\n**Zwycięzcy:** {winners}\n**Zakończony:** {endAbs}\n**Uczestników:** {n}',

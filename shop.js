@@ -5,18 +5,52 @@
 //
 // Ustawienia: publiczny token sklepu w panelu (zakładka Sklep) albo TEBEX_PUBLIC_TOKEN,
 // sekret webhooka TYLKO w zmiennej środowiskowej TEBEX_WEBHOOK_SECRET (Render → Environment).
+// Strona gruzclient.com/shop: gracz wpisuje nick (musi choć raz zagrać przez launcher), serwer tworzy koszyk tak samo jak dla launchera.
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 
 const API = process.env.TEBEX_API || 'https://headless.tebex.io/api/accounts'; // TEBEX_API tylko do testów
 const TEBEX_IPS = ['18.209.80.3', '54.87.231.232'];
 const PAYMENT = { COMPLETE: 1, REFUND: 2, CHARGEBACK: 3 };
+// strona sklepu (powrót z Tebexa) i adresy, z których strona może wołać API sklepu
+const SITE_SHOP = (process.env.SHOP_SITE_URL || 'https://gruzclient.com/shop').replace(/\/+$/, '');
+const SITE_ORIGINS = ['https://gruzclient.com', 'https://www.gruzclient.com', ...String(process.env.SHOP_ORIGINS || '').split(',').map((s) => s.trim()).filter(Boolean)];
+const allowedOrigin = (o) => !!o && (SITE_ORIGINS.includes(o) || /^https:\/\/[a-z0-9-]+\.gruz-website\.pages\.dev$/.test(o) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o));
+const NICK_RE = /^[A-Za-z0-9_]{2,16}$/;
 
 function setup(ctx) {
-  const { db, save, user, sendTo, pushMe, catalog, publicUrl } = ctx;
+  const { db, save, user, sendTo, pushMe, catalog, publicUrl, byName } = ctx;
   db.shop ||= { token: '', items: {} };       // items: packageId -> "cape:c_smok"
   db.purchases ||= [];                         // najnowsze na początku
   const secret = () => process.env.TEBEX_WEBHOOK_SECRET || '';
   const token = () => (process.env.TEBEX_PUBLIC_TOKEN || db.shop.token || '').trim();
+
+  // ---------------- dane sklepu (typ, czy włączony) – pamięć 10 min ----------------
+  // Sklep "Universal (No Auth)" odrzuca nick w koszyku ("You can't set the username for this game type"),
+  // dlatego nick wysyłamy tylko, gdy sklep obsługuje nicki. Gracza i tak rozpoznajemy po uuid w "custom".
+  let store = { at: 0, token: '', info: null };
+  async function storeInfo() {
+    const t = token();
+    if (!t) return null;
+    if (store.token === t && store.info && Date.now() - store.at < 10 * 60_000) return store.info;
+    const r = await fetch(`${API}/${encodeURIComponent(t)}`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+    const d = (await r.json().catch(() => ({}))).data;
+    if (!r.ok || !d) return store.info;
+    store = { at: Date.now(), token: t, info: { name: d.name, type: d.platform_type, disabled: !!d.disabled, usernames: !!d.supports_usernames, currency: d.currency } };
+    return store.info;
+  }
+
+  // ---------------- prosty limit zapytań z jednego IP ----------------
+  const hits = new Map(); // "ip|rodzaj" -> [czasy]
+  function tooMany(ip, kind, max, perMs) {
+    const k = ip + '|' + kind, t0 = Date.now();
+    const list = (hits.get(k) || []).filter((t) => t0 - t < perMs);
+    list.push(t0);
+    hits.set(k, list);
+    if (hits.size > 5000) for (const [key, l] of hits) if (!l.length || t0 - l[l.length - 1] > 3600_000) hits.delete(key);
+    return list.length > max;
+  }
 
   // ---------------- pakiety z Tebexa (pamięć 5 min) ----------------
   let cache = { at: 0, token: '', list: [] };
@@ -25,8 +59,12 @@ function setup(ctx) {
     if (!t) return [];
     if (!force && cache.token === t && Date.now() - cache.at < 5 * 60_000) return cache.list;
     const r = await fetch(`${API}/${encodeURIComponent(t)}/packages`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) throw new Error(`Tebex: ${r.status} (sprawdź publiczny token sklepu)`);
-    const j = await r.json();
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      // Tebex zwraca opis błędu (RFC 9457: title / detail) – pokazujemy go w panelu
+      const why = [j.title, j.detail, j.message, j.error].filter((x) => typeof x === 'string' && x).join(' – ');
+      throw new Error(`Tebex ${r.status}: ${why || 'bez opisu'}`);
+    }
     const list = (j.data || []).map((p) => ({
       id: String(p.id), name: p.name, price: p.total_price ?? p.base_price, currency: p.currency, image: p.image || null,
       discount: p.discount || 0, category: p.category?.name || '',
@@ -35,26 +73,45 @@ function setup(ctx) {
     return list;
   }
 
-  /** Lista dla launchera: tylko pakiety przypisane do istniejącej kosmetyki */
+  /** Podgląd kosmetyki: tekstura peleryny (własna z panelu albo wbudowana z assets/capes) albo null */
+  const BUILTIN_CAPES = new Set(fs.existsSync(path.join(__dirname, 'assets/capes'))
+    ? fs.readdirSync(path.join(__dirname, 'assets/capes')).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4)) : []);
+  function preview(cosmetic) {
+    const [slot, v] = cosmetic.split(':');
+    if (slot !== 'cape') return null;
+    if (catalog.custom[v]) return publicUrl(`/capes/${v}.png?v=${catalog.custom[v].ver || 1}`);
+    return BUILTIN_CAPES.has(v) ? publicUrl(`/shop/cape/${v}.png`) : null;
+  }
+
+  /** Lista dla launchera i strony: tylko pakiety przypisane do istniejącej kosmetyki */
   async function publicList() {
     let list = [];
     try { list = await packages(); } catch { list = cache.list; }
     return list.filter((p) => db.shop.items[p.id] && catalog.exists(db.shop.items[p.id]))
-      .map((p) => ({ packageId: p.id, cosmetic: db.shop.items[p.id], name: p.name, price: p.price, currency: p.currency, image: p.image }));
+      .map((p) => {
+        const cosmetic = db.shop.items[p.id];
+        const label = catalog.customName(cosmetic, 'en') ? { en: catalog.customName(cosmetic, 'en'), pl: catalog.customName(cosmetic, 'pl') } : null;
+        return { packageId: p.id, cosmetic, slot: cosmetic.split(':')[0], name: p.name, label, price: p.price, currency: p.currency, image: p.image, preview: preview(cosmetic), discount: p.discount || 0 };
+      });
   }
 
-  // ---------------- zakup (wiadomość z launchera) ----------------
-  async function buy(c, packageId) {
+  // ---------------- zakup (z launchera albo ze strony) ----------------
+  // c: { uuid, ip }; returnUrl: dokąd Tebex wraca po płatności (launcher: /shop/done na serwerze, strona: gruzclient.com/shop)
+  async function buy(c, packageId, returnUrl) {
     const t = token();
     if (!t) throw new Error('SHOP_OFF');
     const u = user(c.uuid);
     const cosmetic = db.shop.items[String(packageId)];
     if (!u || !cosmetic || !catalog.exists(cosmetic)) throw new Error('SHOP_UNKNOWN');
     if ((u.unlocked || []).includes(cosmetic) || (u.unlocked || []).includes('all')) throw new Error('SHOP_OWNED');
-    const done = publicUrl('/shop/done');
+    const info = await storeInfo().catch(() => null);
+    if (info?.disabled) console.warn('[shop] sklep Tebex jest wyłączony (disabled) – płatność może nie przejść');
+    const done = returnUrl || publicUrl('/shop/done');
+    const back = (q) => done + (done.includes('?') ? '&' : '?') + q;
     const basketRes = await fetch(`${API}/${encodeURIComponent(t)}/baskets`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
-      body: JSON.stringify({ username: u.name, ip_address: c.ip || undefined, complete_url: done, cancel_url: done + '?cancel=1', complete_auto_redirect: true, custom: { uuid: u.uuid } }),
+      body: JSON.stringify({ ...(info?.usernames ? { username: u.name } : {}), ip_address: c.ip || undefined, complete_url: back('done=1'), cancel_url: back('cancel=1'),
+        complete_auto_redirect: true, custom: { uuid: u.uuid, cosmetic } }),
     });
     const basket = await basketRes.json().catch(() => ({}));
     if (!basketRes.ok || !basket.data?.ident) throw new Error('SHOP_TEBEX:' + (basket.detail || basket.message || basketRes.status));
@@ -87,7 +144,7 @@ function setup(ctx) {
   }
 
   function findUser(product, subject) {
-    const uuid = product.custom?.uuid;
+    const uuid = product.custom?.uuid || subject.custom?.uuid; // pakiet albo cały koszyk
     if (uuid && user(uuid)) return user(uuid);
     const name = String(product.username?.username || subject.customer?.username?.username || '').toLowerCase();
     return name ? Object.values(db.users).find((x) => x.name.toLowerCase() === name) : null;
@@ -168,6 +225,69 @@ function setup(ctx) {
   : '<h1>Thank you! 💜</h1><p>Your item will appear in the launcher within a minute – go back to Gruz Client.</p><p>Dziękujemy! Kosmetyka pojawi się w launcherze w ciągu minuty – wróć do Gruz Client.</p>'}</div></body></html>`);
   }
 
+  // ---------------- API dla strony gruzclient.com/shop ----------------
+  const ipOf = (req) => String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim().replace(/^::ffff:/, '');
+  function cors(req) {
+    const o = req.headers.origin;
+    return allowedOrigin(o) ? { 'access-control-allow-origin': o, vary: 'Origin', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' } : { vary: 'Origin' };
+  }
+  function send(req, res, code, body) {
+    res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', ...cors(req) });
+    res.end(JSON.stringify(body));
+  }
+  async function readJson(req) {
+    let raw = '';
+    for await (const ch of req) { raw += ch; if (raw.length > 4096) throw new Error('TOO_BIG'); }
+    try { return JSON.parse(raw || '{}'); } catch { return {}; }
+  }
+  /** Gracz po nicku: nick, uuid i które kosmetyki ze sklepu już ma */
+  function playerView(u) {
+    const unlocked = u.unlocked || [];
+    const all = unlocked.includes('all');
+    const owned = Object.values(db.shop.items).filter((k) => all || unlocked.includes(k) || catalog.FREE.includes(k));
+    return { name: u.name, uuid: u.uuid, owned: [...new Set(owned)] };
+  }
+
+  async function siteApi(req, res, url) {
+    const ip = ipOf(req);
+    if (req.method === 'OPTIONS') { res.writeHead(204, cors(req)); res.end(); return; }
+    if (url.pathname === '/shop/player' && req.method === 'GET') {
+      if (tooMany(ip, 'player', 30, 60_000)) return send(req, res, 429, { error: 'SHOP_SLOW' });
+      const nick = String(url.searchParams.get('name') || '').trim();
+      if (!NICK_RE.test(nick)) return send(req, res, 400, { error: 'SHOP_NICK' });
+      const u = byName(nick);
+      if (!u) return send(req, res, 404, { error: 'SHOP_NO_PLAYER' });
+      return send(req, res, 200, playerView(u));
+    }
+    if (url.pathname === '/shop/checkout' && req.method === 'POST') {
+      if (!allowedOrigin(req.headers.origin)) return send(req, res, 403, { error: 'SHOP_ORIGIN' });
+      if (tooMany(ip, 'checkout', 8, 10 * 60_000)) return send(req, res, 429, { error: 'SHOP_SLOW' });
+      let b;
+      try { b = await readJson(req); } catch { return send(req, res, 413, { error: 'SHOP_UNKNOWN' }); }
+      const nick = String(b.name || '').trim();
+      if (!NICK_RE.test(nick)) return send(req, res, 400, { error: 'SHOP_NICK' });
+      const u = byName(nick);
+      if (!u) return send(req, res, 404, { error: 'SHOP_NO_PLAYER' });
+      try {
+        const r = await buy({ uuid: u.uuid, ip }, String(b.packageId || ''), SITE_SHOP);
+        console.log('[shop] koszyk ze strony dla', u.name, 'pakiet', b.packageId);
+        return send(req, res, 200, { url: r.url });
+      } catch (e) {
+        console.warn('[shop] strona:', e.message);
+        const code = String(e.message).startsWith('SHOP_') ? String(e.message).split(':')[0] : 'SHOP_TEBEX';
+        return send(req, res, code === 'SHOP_OWNED' ? 409 : code === 'SHOP_UNKNOWN' ? 404 : code === 'SHOP_OFF' ? 503 : 502, { error: code });
+      }
+    }
+    return send(req, res, 404, { error: 'NOT_FOUND' });
+  }
+
+  /** Wbudowane tekstury peleryn do podglądu na stronie */
+  function capeTexture(res, v) {
+    if (!BUILTIN_CAPES.has(v)) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=86400' });
+    fs.createReadStream(path.join(__dirname, 'assets/capes', v + '.png')).pipe(res);
+  }
+
   async function http(req, res, url) {
     if (url.pathname === '/tebex/webhook' && req.method === 'POST') { await webhook(req, res); return true; }
     if (url.pathname === '/shop/done') { donePage(res, url); return true; }
@@ -177,6 +297,9 @@ function setup(ctx) {
       res.end(JSON.stringify({ enabled: !!token() && items.length > 0, items }));
       return true;
     }
+    if (url.pathname === '/shop/player' || url.pathname === '/shop/checkout') { await siteApi(req, res, url); return true; }
+    const cape = /^\/shop\/cape\/([a-z0-9_]{1,40})\.png$/.exec(url.pathname);
+    if (cape) { capeTexture(res, cape[1]); return true; }
     return false;
   }
 
@@ -184,11 +307,13 @@ function setup(ctx) {
   async function adminGet() {
     let list = [], error = null;
     try { list = await packages(true); } catch (e) { error = e.message; }
+    store.at = 0;
+    const info = await storeInfo().catch(() => null);
     const paid = db.purchases.filter((p) => p.status === 'paid');
     const revenue = {};
     for (const p of paid) if (p.amount) revenue[p.currency || '?'] = Math.round(((revenue[p.currency || '?'] || 0) + Number(p.amount)) * 100) / 100;
     return {
-      token: db.shop.token || '', tokenFromEnv: !!process.env.TEBEX_PUBLIC_TOKEN, secretSet: !!secret(),
+      token: db.shop.token || '', tokenFromEnv: !!process.env.TEBEX_PUBLIC_TOKEN, secretSet: !!secret(), store: info, siteUrl: SITE_SHOP,
       webhookUrl: publicUrl('/tebex/webhook'), packages: list.map((p) => ({ ...p, cosmetic: db.shop.items[p.id] || '' })), error,
       cosmetics: ctx.LOCKED.filter((k) => k !== 'all'), purchases: db.purchases.slice(0, 100), count: paid.length, revenue,
     };
@@ -219,7 +344,7 @@ function setup(ctx) {
     return { ok: true };
   }
 
-  return { http, buy, publicList, adminGet, adminSave, adminAssign, verify, grant, revoke, packages };
+  return { http, buy, publicList, storeInfo, adminGet, adminSave, adminAssign, verify, grant, revoke, packages };
 }
 
 module.exports = { setup };
