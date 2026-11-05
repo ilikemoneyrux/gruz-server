@@ -79,6 +79,15 @@ Publiczne API: `GET /shop/player?name=NICK` (nick, uuid, posiadane kosmetyki ze 
 (tylko z dozwolonych adresów, limit 8 koszyków / 10 min z jednego IP), `GET /shop/cape/<id>.png` (podgląd wbudowanych peleryn).
 Sklep typu *Universal (No Auth)* nie przyjmuje nicku w koszyku – serwer wysyła nick tylko, gdy sklep go obsługuje; gracza rozpoznaje po `uuid` w `custom`.
 
+## Publiczne API strony (od 1.7.1, public.js)
+
+Dla gruzclient.com/u/<nick> i gruzclient.com/top (CORS dla wszystkich, limit 90 zapytań/min z IP):
+- `GET /api/profile?name=NICK` – nick, uuid, poziom i XP, godziny, od kiedy gra, online (bez adresu serwera), liczba znajomych, odznaki, pozycja w rankingu tygodnia, założone kosmetyki (tylko odblokowane) i adres skina,
+- `GET /api/top?period=week|all&n=50` – ranking tygodnia (XP) albo wszech czasów (godziny),
+- `GET /api/skin/<uuid>.png` – skin z Mojanga przez serwer (pamięć 1 h).
+
+Zbanowani i gracze z ukrytym profilem (panel → Gracze → „Ukryj profil”) nie mają profilu ani miejsca w rankingu.
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

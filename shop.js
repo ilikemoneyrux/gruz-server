@@ -97,7 +97,8 @@ function setup(ctx) {
 
   // ---------------- zakup (z launchera albo ze strony) ----------------
   // c: { uuid, ip }; returnUrl: dokąd Tebex wraca po płatności (launcher: /shop/done na serwerze, strona: gruzclient.com/shop)
-  async function buy(c, packageId, returnUrl) {
+  // from: gracz, który kupuje w prezencie (null = dla siebie) – odbiorca dostaje powiadomienie "X podarował Ci…"
+  async function buy(c, packageId, returnUrl, from = null) {
     const t = token();
     if (!t) throw new Error('SHOP_OFF');
     const u = user(c.uuid);
@@ -111,14 +112,14 @@ function setup(ctx) {
     const basketRes = await fetch(`${API}/${encodeURIComponent(t)}/baskets`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
       body: JSON.stringify({ ...(info?.usernames ? { username: u.name } : {}), ip_address: c.ip || undefined, complete_url: back('done=1'), cancel_url: back('cancel=1'),
-        complete_auto_redirect: true, custom: { uuid: u.uuid, cosmetic } }),
+        complete_auto_redirect: true, custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }),
     });
     const basket = await basketRes.json().catch(() => ({}));
     if (!basketRes.ok || !basket.data?.ident) throw new Error('SHOP_TEBEX:' + (basket.detail || basket.message || basketRes.status));
     const ident = basket.data.ident;
     const addRes = await fetch(`${API}/${encodeURIComponent(t)}/baskets/${encodeURIComponent(ident)}/packages`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
-      body: JSON.stringify({ package_id: String(packageId), quantity: 1, custom: { uuid: u.uuid, cosmetic } }),
+      body: JSON.stringify({ package_id: String(packageId), quantity: 1, custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }),
     });
     const added = await addRes.json().catch(() => ({}));
     if (!addRes.ok) throw new Error('SHOP_TEBEX:' + (added.detail || added.message || addRes.status));
@@ -155,13 +156,13 @@ function setup(ctx) {
       const cosmetic = (p.custom?.cosmetic && catalog.exists(p.custom.cosmetic) && p.custom.cosmetic) || db.shop.items[String(p.id)];
       const u = findUser(p, subject);
       const rec = { tx: subject.transaction_id, at: Date.now(), packageId: String(p.id), name: p.name, cosmetic: cosmetic || null,
-        uuid: u?.uuid || null, player: u?.name || p.username?.username || '', amount: p.paid_price?.amount ?? subject.price_paid?.amount,
+        uuid: u?.uuid || null, player: u?.name || p.username?.username || '', gift: p.custom?.fromName || subject.custom?.fromName || null, amount: p.paid_price?.amount ?? subject.price_paid?.amount,
         currency: p.paid_price?.currency || subject.price_paid?.currency, status: 'paid', granted: false };
       if (db.purchases.some((x) => x.tx === rec.tx && x.packageId === rec.packageId)) continue; // Tebex może wysłać ponownie
       if (u && cosmetic) {
         u.unlocked ||= [];
         if (!u.unlocked.includes(cosmetic)) { u.unlocked.push(cosmetic); rec.granted = true; }
-        sendTo(u.uuid, { t: 'unlocked', cosmetic, unlocked: u.unlocked, purchase: true });
+        sendTo(u.uuid, { t: 'unlocked', cosmetic, unlocked: u.unlocked, purchase: true, ...(rec.gift ? { gift: rec.gift } : {}) });
         pushMe(u.uuid);
       } else rec.status = u ? 'no-cosmetic' : 'no-player';
       db.purchases.unshift(rec);

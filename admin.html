@@ -513,13 +513,14 @@
     $('#users').innerHTML = list.map((u) => `
       <tr data-uuid="${esc(u.uuid)}">
         <td><img src="https://mc-heads.net/avatar/${esc(u.uuid)}/22" alt="">${esc(u.name)}
-          ${u.online ? '<span class="pill on">online</span>' : ''}${u.banned ? '<span class="pill ban">ban</span>' : ''}${u.staff ? '<span class="pill">ekipa</span>' : ''}</td>
+          ${u.online ? '<span class="pill on">online</span>' : ''}${u.banned ? '<span class="pill ban">ban</span>' : ''}${u.staff ? '<span class="pill">ekipa</span>' : ''}${u.privateProfile ? '<span class="pill">ukryty profil</span>' : ''}</td>
         <td>${u.level}</td><td>${u.hours}</td><td>${u.kills}</td>
         <td>${u.badges.map((b) => `<span class="pill">${esc(b)}</span>`).join('')}${u.unlocked.map((b) => `<span class="pill on">${esc(b)}</span>`).join('')}</td>
         <td class="muted">${ago(u.lastSeen)}</td>
         <td class="row">
           <button class="ghost ${u.banned ? '' : 'danger'}" data-act="ban" data-v="${!u.banned}">${u.banned ? 'Odbanuj' : 'Banuj'}</button>
           <button class="ghost" data-act="staff" data-v="${!u.staff}">${u.staff ? 'Zabierz ekipę' : 'Ekipa'}</button>
+          <button class="ghost" data-act="private" data-v="${!u.privateProfile}" title="Profil na gruzclient.com/u/nick i miejsce w rankingu /top">${u.privateProfile ? 'Pokaż profil' : 'Ukryj profil'}</button>
           <button class="ghost" data-act="${u.unlocked.includes('all') ? 'lockall' : 'unlockall'}">${u.unlocked.includes('all') ? 'Zabierz wszystko' : 'Odblokuj wszystko'}</button>
         </td>
       </tr>`).join('') || '<tr><td colspan="7" class="muted">Brak wyników.</td></tr>';
@@ -533,7 +534,7 @@
     if (b.dataset.act === 'ban' && b.dataset.v === 'true' && !confirm('Zbanować tego gracza? Zostanie rozłączony.')) return;
     if (b.dataset.act === 'unlockall') await api('user', { method: 'POST', body: { uuid, unlock: 'all' } });
     else if (b.dataset.act === 'lockall') await api('user', { method: 'POST', body: { uuid, lock: 'all' } });
-    else await api('user', { method: 'POST', body: { uuid, [b.dataset.act === 'ban' ? 'banned' : 'staff']: b.dataset.v === 'true' } });
+    else await api('user', { method: 'POST', body: { uuid, [{ ban: 'banned', staff: 'staff', private: 'privateProfile' }[b.dataset.act]]: b.dataset.v === 'true' } });
     loadUsers();
   });
 
@@ -585,7 +586,7 @@
       <td>${esc(p.price)} ${esc(p.currency)}${p.discount ? ` <span class="pill on">-${esc(p.discount)}</span>` : ''}</td><td><select>${opts(p.cosmetic)}</select></td></tr>`).join('')
       || `<tr><td colspan="3" class="muted">${shop.token || shop.tokenFromEnv ? 'W sklepie Tebex nie ma jeszcze pakietów.' : 'Najpierw wklej Public Token.'}</td></tr>`;
     $('#sh-purchases').innerHTML = shop.purchases.map((x) => `<tr data-tx="${esc(x.tx)}"><td class="muted">${new Date(x.at).toLocaleString('pl-PL')}</td>
-      <td>${esc(x.player || '?')}</td><td>${esc(x.name)}${x.cosmetic ? ` <span class="muted">(${esc(x.cosmetic)})</span>` : ''}</td>
+      <td>${esc(x.player || '?')}${x.gift ? ` <span class="muted">🎁 od ${esc(x.gift)}</span>` : ''}</td><td>${esc(x.name)}${x.cosmetic ? ` <span class="muted">(${esc(x.cosmetic)})</span>` : ''}</td>
       <td>${x.amount != null ? esc(x.amount) + ' ' + esc(x.currency || '') : ''}</td><td><span class="pill ${(ST[x.status] || ['', ''])[1]}">${esc((ST[x.status] || [x.status])[0])}</span></td>
       <td>${x.status === 'no-player' ? '<button class="ghost" data-assign>Przypisz graczowi</button>' : ''}</td></tr>`).join('')
       || '<tr><td colspan="6" class="muted">Jeszcze nikt nic nie kupił.</td></tr>';

@@ -112,7 +112,7 @@ async function route(req, res, url, ctx) {
         .map((u) => ({
           uuid: u.uuid, name: u.name, level: ctx.levelOf(u).level, hours: Math.round(ctx.hoursOf(u) * 10) / 10,
           kills: u.stats?.kills || 0, friends: u.friends.length, badges: u.badges || [], unlocked: u.unlocked || [],
-          banned: !!u.banned, staff: !!u.staff, firstSeen: u.firstSeen, lastSeen: u.lastSeen, online: ctx.presenceOf(u.uuid).online,
+          banned: !!u.banned, staff: !!u.staff, privateProfile: !!u.privateProfile, firstSeen: u.firstSeen, lastSeen: u.lastSeen, online: ctx.presenceOf(u.uuid).online,
         }));
       return json(res, 200, list);
     }
@@ -123,6 +123,7 @@ async function route(req, res, url, ctx) {
       if (!u) return json(res, 404, { error: 'Nie ma takiego gracza.' });
       if ('banned' in body) { u.banned = !!body.banned; if (u.banned) ctx.kick(u.uuid); }
       if ('staff' in body) u.staff = !!body.staff;
+      if ('privateProfile' in body) u.privateProfile = !!body.privateProfile; // ukryty profil na stronie i w rankingu
       if (typeof body.unlock === 'string' && ctx.LOCKED.includes(body.unlock) && !u.unlocked.includes(body.unlock)) u.unlocked.push(body.unlock);
       if (typeof body.lock === 'string') u.unlocked = u.unlocked.filter((x) => x !== body.lock);
       ctx.save();

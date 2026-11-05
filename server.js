@@ -269,6 +269,8 @@ function sendAll(msg) { for (const set of online.values()) for (const c of set) 
 let capesApi = null;
 /** Sklep Tebex (shop.js) – ustawiany przy starcie */
 let shopApi = null;
+/** Publiczne API strony: profile i ranking (public.js) */
+let publicApi = null;
 /** Publiczny adres tego serwera (Render podaje go sam w RENDER_EXTERNAL_URL) */
 const publicUrl = (p) => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/+$/, '') + p;
 function isOnline(uuid) { return clientsOf(uuid).size > 0; }
@@ -661,6 +663,15 @@ const handlers = {
     try { c.send({ t: 'shop.checkout', ...(await shopApi.buy(c, m.packageId)) }); }
     catch (e) { console.warn('[shop]', e.message); c.send({ t: 'shop.error', code: String(e.message).startsWith('SHOP_') ? String(e.message).split(':')[0] : 'SHOP_TEBEX' }); }
   },
+  // prezent dla znajomego: koszyk na uuid znajomego, płaci ten, kto daje (od launchera 0.6.3)
+  async 'shop.gift'(c, m) {
+    if (c.kind !== 'launcher') return;
+    const me = user(c.uuid);
+    const to = dashed(String(m.to || ''));
+    if (!me || !user(to) || !me.friends.includes(to)) return c.send({ t: 'shop.error', code: 'SHOP_NOT_FRIEND' });
+    try { c.send({ t: 'shop.checkout', gift: user(to).name, ...(await shopApi.buy({ uuid: to, ip: c.ip }, m.packageId, undefined, me)) }); }
+    catch (e) { console.warn('[shop] prezent:', e.message); c.send({ t: 'shop.error', code: String(e.message).startsWith('SHOP_') ? String(e.message).split(':')[0] : 'SHOP_TEBEX' }); }
+  },
   presence(c, m) {
     const state = String(m.state || 'launcher').slice(0, 20);
     const server = m.server ? String(m.server).slice(0, 80) : null;
@@ -1012,6 +1023,12 @@ const server = http.createServer((req, res) => {
       .catch((e) => { console.error('[shop]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
     return;
   }
+  if (url.pathname.startsWith('/api/')) {
+    if (!publicApi) { res.writeHead(503); return res.end(); }
+    publicApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
+      .catch((e) => { console.error('[public]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
+    return;
+  }
   if (url.pathname === '/join') return joinPage(res, url);
   if (url.pathname === '/party') return partyPage(res, url);
   if (url.pathname === '/admin' || url.pathname.startsWith('/admin/')) return admin.route(req, res, url, adminCtx);
@@ -1161,6 +1178,7 @@ setInterval(() => {
   db.shop ||= { token: '', items: {} };
   db.purchases ||= [];
   shopApi = require('./shop').setup({ db, save, user, byName, sendTo, pushMe, catalog, publicUrl, LOCKED });
+  publicApi = require('./public').setup({ db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl });
   adminCtx.shop = shopApi;
   levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();

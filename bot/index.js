@@ -254,10 +254,12 @@ module.exports = function startDiscord(ctx) {
     const p = ctx.presenceOf(u.uuid);
     const lv = ctx.levelOf(u);
     const badges = (u.badges || []).map((b) => ctx.badgeName(b)).filter(Boolean);
+    // publiczny profil na stronie (gruzclient.com/u/<nick>), chyba że gracz go ukrył
+    const web = u.privateProfile ? null : `https://gruzclient.com/u/${encodeURIComponent(u.name)}`;
     return new EmbedBuilder().setColor(COLOR)
-      .setTitle(u.name).setURL(`https://namemc.com/profile/${u.uuid}`)
+      .setTitle(u.name).setURL(web || `https://namemc.com/profile/${u.uuid}`)
       .setThumbnail(`https://mc-heads.net/avatar/${u.uuid}/128`)
-      .setDescription(p.online ? `🟢 ${where(p)}` : t('offlineSeen', { t: ts(u.lastSeen || Date.now()) }))
+      .setDescription((p.online ? `🟢 ${where(p)}` : t('offlineSeen', { t: ts(u.lastSeen || Date.now()) })) + (web ? `\n🌐 [gruzclient.com/u/${u.name.replace(/[*_`~]/g, '\\$&')}](${web})` : ''))
       .addFields(
         { name: t('f.level'), value: `${lv.level} (${lv.xp}/${lv.next} XP)`, inline: true },
         { name: t('f.playtime'), value: hoursText(u.stats?.totalMs), inline: true },
@@ -1099,7 +1101,7 @@ module.exports = function startDiscord(ctx) {
   // ---------------- ranking tygodniowy ----------------
   function weeklyEmbed(rows, { title, week, cosmetic, places } = {}) {
     const medal = ['🥇', '🥈', '🥉'];
-    const e = new EmbedBuilder().setColor(COLOR).setTitle(title || t('wkTitle', { w: week || ctx.weekKey() }))
+    const e = new EmbedBuilder().setColor(COLOR).setTitle(title || t('wkTitle', { w: week || ctx.weekKey() })).setURL('https://gruzclient.com/top')
       .setDescription(rows.length ? rows.map((r, k) => `${medal[k] || `**${k + 1}.**`} ${r.name.replace(/[*_`~]/g, '\\$&')} · **${r.xp} XP**`).join('\n') : t('wkEmpty'))
       .setThumbnail('attachment://logo.png').setTimestamp(new Date());
     if (cosmetic && places) e.addFields({ name: t('wkReward'), value: t('wkRewardText', { n: places, c: cosmeticLabel(cosmetic) }) });
@@ -1548,10 +1550,10 @@ module.exports = function startDiscord(ctx) {
             return i.reply({ embeds: [weeklyEmbed(ctx.weeklyTop(10), { cosmetic: db.promo?.weeklyReward?.cosmetic, places: db.promo?.weeklyReward?.places })], files: [logoFile()] });
           }
           if (sub === 'top') {
-            const top = Object.values(db.users).sort((a, b) => (b.stats?.totalMs || 0) - (a.stats?.totalMs || 0)).slice(0, 10);
+            const top = Object.values(db.users).filter((u) => !u.banned && !u.privateProfile).sort((a, b) => (b.stats?.totalMs || 0) - (a.stats?.totalMs || 0)).slice(0, 10);
             const medal = ['🥇', '🥈', '🥉'];
-            return i.reply({ embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('topTitle'))
-              .setDescription(top.map((u, k) => `${medal[k] || `**${k + 1}.**`} ${u.name} · ${hoursText(u.stats?.totalMs)} · ${t('level', { n: ctx.levelOf(u).level })}`).join('\n') || t('noData'))] });
+            return i.reply({ embeds: [new EmbedBuilder().setColor(COLOR).setTitle(t('topTitle')).setURL('https://gruzclient.com/top')
+              .setDescription((top.map((u, k) => `${medal[k] || `**${k + 1}.**`} ${u.name} · ${hoursText(u.stats?.totalMs)} · ${t('level', { n: ctx.levelOf(u).level })}`).join('\n') || t('noData')) + '\n\n🌐 [gruzclient.com/top](https://gruzclient.com/top)')] });
           }
           if (sub === 'link') return cmdLink(i);
           if (sub === 'invites') return cmdInvites(i);
