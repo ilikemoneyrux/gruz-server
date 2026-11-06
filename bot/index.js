@@ -20,6 +20,10 @@ const COLOR = 0xb45cff;
 const GREEN = 0x3ddc84;
 const RED = 0xff5c7a;
 const RELEASES_REPO = process.env.GRUZ_RELEASES_REPO || 'ilikemoneyrux/gruz-client';
+// opis zmian do ogłoszeń nowych wersji (ten sam plik co gruzclient.com/changelog i okienko „Co nowego” w launcherze)
+const CHANGELOG_URL = process.env.GRUZ_CHANGELOG_URL || 'https://gruzclient.com/changelog.json';
+const SITE = (process.env.SHOP_SITE_URL || 'https://gruzclient.com').replace(/\/+$/, '');
+const LINK_XP = 200; // jednorazowe XP za połączenie konta Discord (/gruz link)
 const P = PermissionFlagsBits;
 
 const SLOT = {
@@ -105,6 +109,8 @@ const adminCmd = new SlashCommandBuilder()
     .addSubcommand((s) => s.setName('partner-role').setDescription('Add/remove a role that can use /gruzpartner (e.g. Partner, Content Creator)')
       .addRoleOption((o) => o.setName('role').setDescription('Role (run again to remove)').setRequired(true)))
     .addSubcommand((s) => s.setName('ranking-channel').setDescription('Channel for the weekly XP ranking (posted every Monday)')
+      .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)))
+    .addSubcommand((s) => s.setName('shop-channel').setDescription('Channel for new cosmetics and sales in the shop (posted automatically)')
       .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true).addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement))))
   .addSubcommandGroup((g) => g.setName('levels').setDescription('Discord roles for Gruz levels')
     .addSubcommand((s) => s.setName('set').setDescription('Give a role to linked players from this level up')
@@ -189,6 +195,7 @@ module.exports = function startDiscord(ctx) {
     const lang = cfg().lang === 'pl' ? 'pl' : 'en';
     if (key === 'all') return lang === 'pl' ? 'Wszystkie kosmetyki' : 'All cosmetics';
     if (key === 'pass:premium') return lang === 'pl' ? 'Gruz Pass Premium (bieżący miesiąc)' : 'Gruz Pass Premium (current month)';
+    if (key.startsWith('emote:')) { const n = { highfive: ['Przybij piątkę', 'High five'], hug: ['Przytulas', 'Hug'], duodance: ['Taniec w parze', 'Duo dance'] }[key.slice(6)] || [key, key]; return (lang === 'pl' ? 'Emotka we dwoje: ' : 'Duo emote: ') + n[lang === 'pl' ? 0 : 1]; }
     const [slot, v] = key.split(':');
     const own = ctx.catalog?.customName?.(key, lang); // własna peleryna z panelu – nazwa z panelu
     if (own) return lang === 'pl' ? `${SLOT.pl[slot]} ${own}` : `${own} ${SLOT.en[slot].toLowerCase()}`;
@@ -512,7 +519,9 @@ module.exports = function startDiscord(ctx) {
       if (!rel.tag_name) return { ok: false, error: 'Brak release na GitHubie.' };
       if (!force && rel.tag_name === cfg().lastRelease) return { ok: true, skipped: rel.tag_name };
       const exe = (rel.assets || []).find((a) => /\.exe$/i.test(a.name));
-      const notes = String(rel.body || '').trim().replace(/\r/g, '').slice(0, 3500) || t('relNoNotes');
+      let notes = String(rel.body || '').trim().replace(/\r/g, '').slice(0, 3500);
+      // pusty opis release (albo samo „bug fixes”) – bierzemy listę zmian z gruzclient.com/changelog.json
+      if (!notes || /^(bug ?fixes|poprawki)/i.test(notes)) notes = (await changelogNotes(rel.tag_name)) || notes || t('relNoNotes');
       const ch = await client.channels.fetch(chId);
       const e = new EmbedBuilder().setColor(COLOR).setTitle(t('relTitle', { v: rel.tag_name })).setURL(rel.html_url)
         .setDescription(notes).setThumbnail('attachment://logo.png').setFooter({ text: t('relFooter') })
@@ -528,6 +537,65 @@ module.exports = function startDiscord(ctx) {
       const msg = e.code === 50013 || e.code === 50001 ? 'Bot nie ma uprawnień na kanale ogłoszeń (Wyświetl kanał, Wysyłaj wiadomości, Osadzaj linki, Załączaj pliki).' : e.message;
       console.error('[discord] aktualizacje:', msg);
       return { ok: false, error: msg };
+    }
+  }
+
+  /** Lista zmian danej wersji z changelog.json (w języku bota) albo null */
+  async function changelogNotes(tag) {
+    try {
+      const v = String(tag || '').replace(/^v/i, '');
+      const r = await fetch(CHANGELOG_URL, { headers: { 'user-agent': 'GruzClientBot' }, signal: AbortSignal.timeout(10000) });
+      if (!r.ok) return null;
+      const list = await r.json();
+      const entry = Array.isArray(list) && list.find((x) => x.version === v);
+      if (!entry) return null;
+      const c = entry[cfg().lang === 'pl' ? 'pl' : 'en'] || entry.en;
+      const lines = [c.title ? `**${c.title}**` : '', c.lead || '', ...(c.items || []).map((x) => `• ${x}`)].filter(Boolean);
+      return (lines.join('\n') + `\n\n[${t('relAll')}](${SITE}/changelog)`).slice(0, 3800);
+    } catch { return null; }
+  }
+
+  // ---------------- nowości i promocje w sklepie (Tebex) ----------------
+  // Co 15 minut porównujemy pakiety z Tebexa z zapamiętanymi. Nowy pakiet albo nowa promocja = post z obrazkiem
+  // i przyciskiem BUY NOW (gruzclient.com/cosmetics). Przy pierwszym sprawdzeniu tylko zapamiętujemy (bez spamu).
+  async function shopTick() {
+    const chId = cfg().channels.shop;
+    const token = (process.env.TEBEX_PUBLIC_TOKEN || db.shop?.token || '').trim();
+    if (!chId || !token) return;
+    try {
+      const r = await fetch(`https://headless.tebex.io/api/accounts/${encodeURIComponent(token)}/packages`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) return;
+      const list = (await r.json()).data || [];
+      const c = cfg();
+      const first = !c.shopSeen;
+      const seen = c.shopSeen || {};
+      const posts = [];
+      for (const p of list) {
+        const off = p.base_price > 0 && p.discount > 0 ? Math.round((p.discount / p.base_price) * 100) : 0;
+        const was = seen[p.id];
+        if (!first && !was) posts.push({ p, kind: 'new', off });
+        else if (!first && was && off >= 5 && off !== was.off) posts.push({ p, kind: 'sale', off });
+        seen[p.id] = { off, at: was?.at || Date.now() };
+      }
+      c.shopSeen = seen;
+      save();
+      if (!posts.length) return;
+      const ch = await client.channels.fetch(chId);
+      for (const { p, kind, off } of posts.slice(0, 5)) {
+        const key = ctx.codePackages?.[p.id];
+        const url = `${SITE}/cosmetics${key ? '#' + key : ''}`;
+        const price = new Intl.NumberFormat(cfg().lang === 'pl' ? 'pl-PL' : 'en-GB', { style: 'currency', currency: p.currency || 'EUR' }).format(p.total_price ?? p.base_price);
+        const desc = String(p.description || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().split(/(?<=\.)\s/)[0] || '';
+        const e = new EmbedBuilder().setColor(kind === 'sale' ? 0xff7a1a : COLOR).setURL(url)
+          .setTitle(t(kind === 'sale' ? 'shopSaleTitle' : 'shopNewTitle', { name: p.name, off }))
+          .setDescription(`${desc}\n\n**${price}**${kind === 'sale' ? ` ~~${new Intl.NumberFormat(cfg().lang === 'pl' ? 'pl-PL' : 'en-GB', { style: 'currency', currency: p.currency || 'EUR' }).format(p.base_price)}~~` : ''}\n${t('shopHow')}`)
+          .setFooter({ text: 'gruzclient.com/cosmetics' });
+        if (p.image) e.setImage(p.image);
+        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('BUY NOW').setEmoji('🛒').setURL(url));
+        await ch.send({ embeds: [e], components: [row] });
+      }
+    } catch (e) {
+      console.error('[discord] sklep:', e.code === 50013 || e.code === 50001 ? 'brak uprawnień na kanale sklepu' : e.message);
     }
   }
 
@@ -885,13 +953,14 @@ module.exports = function startDiscord(ctx) {
       return reply(i, t('cfgMemberRole', { r: `${role}` }));
     }
     const ch = i.options.getChannel('channel', true);
-    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs', 'crashes-channel': 'crashes', 'ranking-channel': 'ranking' }[sub];
+    const key = { 'status-channel': 'status', 'updates-channel': 'updates', 'logs-channel': 'logs', 'crashes-channel': 'crashes', 'ranking-channel': 'ranking', 'shop-channel': 'shop' }[sub];
     c.channels[key] = ch.id;
     if (key === 'status') statusMsg = null;
     if (key === 'updates') c.lastRelease = c.lastRelease || null;
     save();
     if (key === 'status') updateStatus();
     if (key === 'updates') releaseTick();
+    if (key === 'shop') shopTick();
     return reply(i, t('cfgChannel', { what: t('cfg.' + key), ch: `${ch}` }));
   }
 
@@ -909,6 +978,9 @@ module.exports = function startDiscord(ctx) {
     for (const [did, uid] of Object.entries(c.links)) if (uid === uuid && did !== i.user.id) delete c.links[did];
     c.links[i.user.id] = uuid;
     u.discord = { id: i.user.id, tag: i.user.tag, at: Date.now() };
+    // jednorazowe XP za pierwsze połączenie (liczy się też do Gruz Pass)
+    let xpNote = '';
+    if (!u.linkXp) { u.linkXp = true; u.bonusXp = (u.bonusXp || 0) + LINK_XP; xpNote = t('linkXp', { xp: LINK_XP }); ctx.updateBadges?.(uuid); }
     save();
     ctx.pushMe?.(uuid);
     let roleNote = '';
@@ -918,7 +990,7 @@ module.exports = function startDiscord(ctx) {
     }
     logTo({ content: t('linkLog', { user: `${i.user} (${i.user.tag})`, nick: u.name }), allowedMentions: { parse: [] } });
     applyLevelRole(uuid).catch(() => {});
-    return i.reply({ embeds: [profileEmbed(u).setAuthor({ name: t('linkOk', { nick: u.name }) })], content: roleNote || undefined, ephemeral: true });
+    return i.reply({ embeds: [profileEmbed(u).setAuthor({ name: t('linkOk', { nick: u.name }) })], content: [xpNote, roleNote].filter(Boolean).join('\n') || undefined, ephemeral: true });
   }
 
   async function cmdUnlink(i) {
@@ -1415,7 +1487,7 @@ module.exports = function startDiscord(ctx) {
       const c = cfg();
       if (b.lang === 'en' || b.lang === 'pl') c.lang = b.lang;
       if (b.channels && typeof b.channels === 'object') {
-        for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking']) if (k in b.channels) c.channels[k] = String(b.channels[k] || '') || undefined;
+        for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking', 'shop']) if (k in b.channels) c.channels[k] = String(b.channels[k] || '') || undefined;
         statusMsg = null;
       }
       if ('memberRole' in b) c.memberRole = String(b.memberRole || '') || undefined;
@@ -1533,7 +1605,7 @@ module.exports = function startDiscord(ctx) {
         const f = i.options.getFocused(true);
         const q = String(f.value || '').toLowerCase();
         if (f.name === 'cosmetic') {
-          const items = [...ctx.LOCKED, ...(ctx.isCodeKey ? ['pass:premium'] : [])].map((k) => ({ name: cosmeticLabel(k), value: k }))
+          const items = [...ctx.LOCKED, ...(ctx.isCodeKey ? ['pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance'] : [])].map((k) => ({ name: cosmeticLabel(k), value: k }))
             .filter((x) => !q || x.name.toLowerCase().includes(q) || x.value.includes(q));
           return i.respond(items.slice(0, 25));
         }
@@ -1664,6 +1736,8 @@ module.exports = function startDiscord(ctx) {
     setInterval(() => giveawayTick().catch((e) => console.error('[discord] giveaway tick:', e.message)), 10_000);
     releaseTick();
     setInterval(releaseTick, 5 * 60_000);
+    shopTick();
+    setInterval(shopTick, 15 * 60_000);
     setInterval(() => eventTick().catch((e) => console.error('[discord] event tick:', e.message)), 30_000);
     setTimeout(() => syncLevelRoles().catch(() => {}), 60_000);
     setInterval(() => syncLevelRoles().catch(() => {}), 6 * 36e5);

@@ -376,6 +376,7 @@
           <label class="blk">Kanał: logi (tickety, weryfikacja, zaproszenia)<select id="b-ch-logs" class="ch-sel"></select></label>
           <label class="blk">Kanał: raporty crashy (tylko ekipa!)<select id="b-ch-crashes" class="ch-sel"></select></label>
           <label class="blk">Kanał: ranking tygodniowy<select id="b-ch-ranking" class="ch-sel"></select></label>
+          <label class="blk">Kanał: nowości i promocje w sklepie<select id="b-ch-shop" class="ch-sel"></select></label>
           <label class="blk">Rola po połączeniu konta (Gruz Member)<select id="b-member" class="role-sel"></select></label>
           <label class="blk">Rola ekipy (widzi tickety)<select id="b-staff" class="role-sel"></select></label>
           <label class="blk">Role partnerów / twórców (mogą używać /gruzpartner)</label><div class="checks" id="b-partners"></div>
@@ -886,7 +887,7 @@
     const chOpts = (sel) => '<option value="">— brak —</option>' + bot.channels.map((x) => `<option value="${x.id}" ${x.id === sel ? 'selected' : ''}>#${esc(x.name)}${x.parent ? ' · ' + esc(x.parent) : ''}</option>`).join('');
     const roleOpts = (sel) => '<option value="">— brak —</option>' + bot.roles.map((r) => `<option value="${r.id}" ${r.id === sel ? 'selected' : ''}>@${esc(r.name)}</option>`).join('');
     $('#b-lang').value = c.lang;
-    for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking']) $('#b-ch-' + k).innerHTML = chOpts(c.channels[k]);
+    for (const k of ['status', 'updates', 'logs', 'crashes', 'ranking', 'shop']) $('#b-ch-' + k).innerHTML = chOpts(c.channels[k]);
     lvRoleOpts = roleOpts;
     $('#lv-list').innerHTML = (c.levelRoles || []).map((x) => lvRow(x)).join('') || '<p class="muted" id="lv-empty">Brak ról za poziom.</p>';
     $('#lv-stack').checked = !!c.levelStack;
@@ -906,7 +907,7 @@
   }
   $('#b-save').addEventListener('click', () => act('#b-save-ok', '#b-save-err', () => api('bot/config', { method: 'POST', body: {
     lang: $('#b-lang').value, memberRole: $('#b-member').value, staffRole: $('#b-staff').value,
-    channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value, ranking: $('#b-ch-ranking').value },
+    channels: { status: $('#b-ch-status').value, updates: $('#b-ch-updates').value, logs: $('#b-ch-logs').value, crashes: $('#b-ch-crashes').value, ranking: $('#b-ch-ranking').value, shop: $('#b-ch-shop').value },
     partnerRoles: [...document.querySelectorAll('#b-partners input:checked')].map((x) => x.value),
   } })));
   $('#b-release').addEventListener('click', () => act('#b-rel-ok', '#b-rel-err', () => api('bot/release', { method: 'POST' })));

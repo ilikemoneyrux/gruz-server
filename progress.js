@@ -17,7 +17,7 @@ const DEFAULT_PASS = {
 const PASS_CODE = 'pass:premium';
 
 function setup(ctx) {
-  const { db, save, xpOf, levelOf, hoursOf, dayKey, catalog, sendTo } = ctx;
+  const { db, save, xpOf, levelOf, hoursOf, dayKey, dayBefore, catalog, sendTo } = ctx;
 
   // ---------------- osiągnięcia ----------------
   // prog(u) -> [ile jest, ile trzeba]; xp – jednorazowa nagroda
@@ -38,6 +38,7 @@ function setup(ctx) {
     { id: 'level50', pl: 'Poziom 50', en: 'Level 50', xp: 0, prog: (u) => [levelOf(u).level, 50] },
     { id: 'top3', pl: 'Podium tygodnia', en: 'Weekly podium', xp: 200, prog: (u) => [u.bestWeekly && u.bestWeekly <= 3 ? 1 : 0, 1] },
     { id: 'passMax', pl: 'Gruz Pass: poziom 30', en: 'Gruz Pass: tier 30', xp: 0, prog: (u) => [passTier(u), PASS_TIERS] },
+    { id: 'login30', pl: 'Stały bywalec (30 dni)', en: 'Regular (30 days)', xp: 300, prog: (u) => [n(u.loginTotal), 30] },
   ];
   // jako odznaki (ta sama lista co BADGES w server.js)
   const asBadges = ACH.map((a) => ({ id: a.id, pl: a.pl, en: a.en, test: (u) => { const [c, g] = a.prog(u); return c >= g; } }));
@@ -146,7 +147,29 @@ function setup(ctx) {
     return { ok: true };
   }
 
-  return { ACH, asBadges, rewardList, passRebase, rewardXp, xpFor, achievementsView, passView, passCheck, passTier, activatePremium, PASS_CODE, monthKey };
+  // ---------------- codzienna nagroda za logowanie (od 1.8.0) ----------------
+  // Dzień 1–7 w kółko; każdy dzień daje XP (liczy się do Gruz Pass), dzień 7 – dużo więcej. Pominięty dzień = od nowa.
+  const DAILY = () => (Array.isArray(db.promo?.dailyXp) && db.promo.dailyXp.length === 7 ? db.promo.dailyXp.map(Number) : [30, 40, 50, 60, 80, 100, 250]);
+  function dailyView(u) {
+    const today = dayKey();
+    const d = u.login || { n: 0, last: '' };
+    const claimed = d.last === today;
+    const alive = claimed || d.last === dayBefore(today);
+    const streak = alive ? d.n : 0;
+    return { claimed, day: claimed ? d.n : (streak % 7) + 1, streak, rewards: DAILY(), total: u.loginTotal || 0 };
+  }
+  function dailyClaim(u) {
+    const v = dailyView(u);
+    if (v.claimed) return { error: 'DAILY_CLAIMED' };
+    const xp = v.rewards[v.day - 1] || 0;
+    u.login = { n: v.day, last: dayKey() };
+    u.loginTotal = (u.loginTotal || 0) + 1;
+    u.bonusXp = (u.bonusXp || 0) + xp;
+    save();
+    return { ok: true, xp, day: v.day };
+  }
+
+  return { ACH, asBadges, rewardList, passRebase, dailyView, dailyClaim, rewardXp, xpFor, achievementsView, passView, passCheck, passTier, activatePremium, PASS_CODE, monthKey };
 }
 
 module.exports = { setup, PASS_CODE, PASS_TIERS, PASS_XP, DEFAULT_PASS };

@@ -121,7 +121,7 @@ function setup(ctx) {
       }
       for (const c of Object.values(catalog.custom)) if (c.unlock === 'level') add(`cape:${c.id}`, { type: 'level', level: c.level });
       const custom = Object.values(catalog.custom).map((c) => ({ id: c.id, name: { pl: c.pl, en: c.en || c.pl }, url: publicUrl(`/capes/${c.id}.png?v=${c.ver || 1}`) }));
-      send(res, 200, { catalog: catalog.CATALOG, how, custom, season: catalog.activeSeason() }, 300);
+      send(res, 200, { catalog: catalog.CATALOG, how, custom, season: catalog.activeSeason(), duoEmotes: ['highfive', 'hug', 'duodance'] }, 300);
       return true;
     }
     const m = /^\/api\/skin\/([0-9a-f-]{32,36})\.png$/.exec(url.pathname);

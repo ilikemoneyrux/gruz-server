@@ -153,7 +153,7 @@ function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
     discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u),
     weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() },
-    achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [] };
+    achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [], daily: progress.dailyView(u) };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
@@ -244,10 +244,12 @@ const catalog = require('./catalog');
 /** Do panelu admina: wszystko, na co można zrobić kod ("all" = cały katalog) */
 const LOCKED = [...catalog.ALL.filter((k) => !catalog.FREE.includes(k)), 'all'];
 /** Kody mogą też dawać Gruz Pass Premium (nie jest kosmetyką, więc nie ma go w LOCKED) */
-const isCodeKey = (k) => LOCKED.includes(k) || k === 'pass:premium';
+/** Płatne emotki we dwoje (od 1.8.0): emote:<id> w u.unlocked, mod gra je razem z drugim graczem */
+const DUO_EMOTES = ['highfive', 'hug', 'duodance'];
+const isCodeKey = (k) => LOCKED.includes(k) || k === 'pass:premium' || DUO_EMOTES.some((id) => k === 'emote:' + id);
 
 // ---------------- osiągnięcia i Gruz Pass (progress.js) ----------------
-const progress = require('./progress').setup({ db, save, xpOf, levelOf, hoursOf, dayKey, catalog, sendTo });
+const progress = require('./progress').setup({ db, save, xpOf, levelOf, hoursOf, dayKey, dayBefore, catalog, sendTo });
 BADGES.push(...progress.asBadges);
 /** Zostawia tylko to, co gracz ma odblokowane. Kolor motywu przechodzi bez zmian. */
 function cleanCosmetics(u, set) {
@@ -365,6 +367,8 @@ function leaveParty(uuid) {
 // Lider dostaje link https://…/party?c=KOD, który otwiera launcher (gruzclient://party/KOD).
 // Kto ma link, może dołączyć bez bycia znajomym. Kod działa 30 minut i maksymalnie 7 razy.
 const partyCodes = new Map(); // KOD -> { leader, exp, uses }
+const duoInvites = new Map(); // "do|od" -> { emote, exp } – emotki we dwoje
+setInterval(() => { const t = now(); for (const [k, v] of duoInvites) if (v.exp < t) duoInvites.delete(k); }, 60_000);
 function partyLink(uuid) {
   for (const [k, v] of partyCodes) if (v.exp < now()) partyCodes.delete(k);
   let code = [...partyCodes].find(([, v]) => v.leader === uuid && v.uses < 7)?.[0];
@@ -715,6 +719,33 @@ const handlers = {
     c.send({ t: 'cosmetics', map });
   },
 
+  /** Emotka we dwoje: zaproszenie dla gracza obok (ten sam serwer Minecraft). Emotkę musi mieć ten, kto zaprasza. */
+  'duo.invite'(c, m) {
+    const id = String(m.emote || '');
+    const u = user(c.uuid);
+    if (!DUO_EMOTES.includes(id)) return;
+    if (!(u.unlocked.includes('emote:' + id) || u.unlocked.includes('all'))) return c.send({ t: 'error', code: 'DUO_LOCKED' });
+    const to = dashed(String(m.to || ''));
+    const key = roomKey(c);
+    const there = key && roomMembers(key).filter((o) => o.uuid === to);
+    if (!there || !there.length) return c.send({ t: 'error', code: 'DUO_FAR' });
+    duoInvites.set(`${to}|${c.uuid}`, { emote: id, exp: now() + 20_000 });
+    for (const o of there) o.send({ t: 'duo.invite', from: c.uuid, name: u.name, emote: id });
+    c.send({ t: 'duo.sent', to, emote: id });
+  },
+  /** Przyjęcie zaproszenia: start u obu i u wszystkich graczy Gruz na tym serwerze */
+  'duo.accept'(c, m) {
+    const from = dashed(String(m.from || ''));
+    const k = `${c.uuid}|${from}`;
+    const inv = duoInvites.get(k);
+    duoInvites.delete(k);
+    if (!inv || inv.exp < now()) return c.send({ t: 'error', code: 'DUO_EXPIRED' });
+    const key = roomKey(c);
+    if (!key || !roomMembers(key).some((o) => o.uuid === from)) return c.send({ t: 'error', code: 'DUO_FAR' });
+    const msg = { t: 'duo.start', a: from, b: c.uuid, emote: inv.emote };
+    for (const o of roomMembers(key)) o.send(msg);
+  },
+
   emote(c, m) {
     const id = String(m.id || '').slice(0, 20);
     const key = roomKey(c);
@@ -983,6 +1014,14 @@ const handlers = {
     for (const f of u.friends) pushFriends(f);
   },
 
+  /** Codzienna nagroda za logowanie (przycisk na stronie Graj w launcherze) */
+  'daily.claim'(c) {
+    const u = user(c.uuid);
+    const r = progress.dailyClaim(u);
+    c.send({ t: 'daily.claimed', ...r });
+    if (r.ok) { updateBadges(c.uuid); pushMe(c.uuid); }
+  },
+
   'quests.get'(c) { c.send({ t: 'quests', ...questsView(user(c.uuid)) }); },
   'quests.claim'(c, m) {
     const u = user(c.uuid);
@@ -1226,6 +1265,7 @@ setInterval(() => {
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
     db, save, online, presenceOf, levelOf, LOCKED, isCodeKey, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
+    updateBadges, codePackages: require('./codepkgs'),
     tiers, grantInviteRewards, inviteCodeOf, onInvite: (f) => inviteListeners.push(f), registerAdmin: (api) => { adminCtx.bot = api; },
     onCrash: (f) => crashListeners.push(f),
     onCrashHelp: (f) => { crashHelp = f; },

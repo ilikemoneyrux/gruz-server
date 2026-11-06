@@ -97,6 +97,11 @@ Zbanowani i gracze z ukrytym profilem (panel → Gracze → „Ukryj profil”) 
 - `GET /api/cosmetics` – katalog i sposoby zdobycia każdej rzeczy za darmo (wydarzenia, seria zadań, zaproszenia, ranking, Gruz Pass) – galeria gruzclient.com/cosmetics.
 - `/api/profile` ma też `wishlist`, `achievements: { done, total }` i `pass: { tier, tiers, premium }`.
 
+## Nagroda dnia, emotki we dwoje, bot (od 1.8.0)
+- **Nagroda dnia** – `daily.claim`: dzień 1–7 w kółko (domyślnie 30/40/50/60/80/100/250 XP, zmiana: `promo.json` → `dailyXp: [7 liczb]`), pominięty dzień = od nowa; osiągnięcie „Stały bywalec” za 30 odbiorów.
+- **Emotki we dwoje** (płatne) – kody `emote:highfive`, `emote:hug`, `emote:duodance` (panel → Kody albo `/shop-codes`). `duo.invite` (zaprasza właściciel emotki, drugi gracz musi być na tym samym serwerze Minecraft) → `duo.accept` → `duo.start` do wszystkich graczy Gruz na serwerze. Zaproszenie ważne 20 s.
+- **Bot** – ogłoszenie nowej wersji bierze listę zmian z `https://gruzclient.com/changelog.json` (zmienna `GRUZ_CHANGELOG_URL`), gdy opis release na GitHubie jest pusty; `/gruz-admin config shop-channel` – posty o nowych pakietach i promocjach w Tebexie (co 15 min, przycisk BUY NOW; mapa pakietów w `codepkgs.js`); +200 XP za pierwsze `/gruz link`.
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

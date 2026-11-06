@@ -134,7 +134,7 @@ async function route(req, res, url, ctx) {
 
     if (p === '/admin/api/codes' && req.method === 'GET') {
       return json(res, 200, {
-        locked: [...ctx.LOCKED, 'pass:premium'],
+        locked: [...ctx.LOCKED, 'pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance'],
         codes: Object.entries(db.codes).map(([code, c]) => ({ code, ...c, used: c.used.length })).sort((a, b) => b.created - a.created),
       });
     }
