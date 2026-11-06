@@ -134,13 +134,13 @@ async function route(req, res, url, ctx) {
 
     if (p === '/admin/api/codes' && req.method === 'GET') {
       return json(res, 200, {
-        locked: ctx.LOCKED,
+        locked: [...ctx.LOCKED, 'pass:premium'],
         codes: Object.entries(db.codes).map(([code, c]) => ({ code, ...c, used: c.used.length })).sort((a, b) => b.created - a.created),
       });
     }
     if (p === '/admin/api/codes' && req.method === 'POST') {
       const body = await readBody(req);
-      if (!ctx.LOCKED.includes(body.cosmetic)) return json(res, 400, { error: 'Nieznana kosmetyka.' });
+      if (!ctx.isCodeKey(body.cosmetic)) return json(res, 400, { error: 'Nieznana kosmetyka.' });
       const count = Math.max(1, Math.min(100, Number(body.count) || 1));
       const made = [];
       for (let i = 0; i < count; i++) {

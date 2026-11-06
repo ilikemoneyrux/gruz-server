@@ -4,7 +4,7 @@
 const SKIN_TTL = 60 * 60_000;
 
 function setup(ctx) {
-  const { db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl } = ctx;
+  const { db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl, streakTiers, tiers, progress } = ctx;
   const visible = (u) => u && !u.banned && !u.privateProfile;
 
   // ---------------- limit zapytań z jednego IP ----------------
@@ -75,6 +75,9 @@ function setup(ctx) {
       friends: (u.friends || []).length, badges,
       weekly: { xp: weeklyXp(u), rank: weeklyXp(u) > 0 ? 1 + Object.values(db.users).filter((x) => visible(x) && weeklyXp(x) > weeklyXp(u)).length : null }, // jak w /api/top (bez ukrytych)
       cosmetics: cosmeticsOf(u),
+      wishlist: (u.wishlist || []).filter((k) => !(u.unlocked || []).includes(k)),
+      achievements: { done: (u.badges || []).length, total: BADGES.filter((b) => b.id !== 'staff').length },
+      pass: progress ? { tier: progress.passTier(u), tiers: 30, premium: !!(u.pass && u.pass.premium && u.pass.m === progress.monthKey()) } : null,
       skin: { url: s.png ? publicUrl(`/api/skin/${u.uuid}.png`) : null, slim: s.slim },
     };
   }
@@ -101,6 +104,24 @@ function setup(ctx) {
       const period = url.searchParams.get('period') === 'all' ? 'all' : 'week';
       const n = Math.min(100, Math.max(1, Number(url.searchParams.get('n')) || 50));
       send(res, 200, { period, unit: period === 'week' ? 'xp' : 'hours', reward: db.promo?.weeklyReward || null, rows: top(period, n), players: Object.values(db.users).filter(visible).length }, 120);
+      return true;
+    }
+    if (url.pathname === '/api/cosmetics') {
+      // galeria kosmetyków na stronie: katalog i to, jak można dostać każdą rzecz za darmo
+      const how = {};
+      const add = (key, what) => { if (key) (how[key] ||= []).push(what); };
+      for (const k of catalog.FREE) add(k, { type: 'free' });
+      for (const [id, s] of Object.entries(catalog.SEASONS)) for (const k of s.items) add(k, { type: 'event', event: id, from: s.from, to: s.to });
+      for (const t of streakTiers()) add(t.cosmetic, { type: 'streak', days: t.days });
+      for (const t of tiers()) add(t.cosmetic, { type: 'invite', count: t.count });
+      if (db.promo?.weeklyReward?.cosmetic) add(db.promo.weeklyReward.cosmetic, { type: 'weekly', places: Number(db.promo.weeklyReward.places) || 0 });
+      if (db.promo?.creatorReward) add(db.promo.creatorReward, { type: 'creator' });
+      if (progress) {
+        for (const r of progress.rewardList()) { add(r.free, { type: 'pass', tier: r.tier, premium: false }); add(r.premium, { type: 'pass', tier: r.tier, premium: true }); }
+      }
+      for (const c of Object.values(catalog.custom)) if (c.unlock === 'level') add(`cape:${c.id}`, { type: 'level', level: c.level });
+      const custom = Object.values(catalog.custom).map((c) => ({ id: c.id, name: { pl: c.pl, en: c.en || c.pl }, url: publicUrl(`/capes/${c.id}.png?v=${c.ver || 1}`) }));
+      send(res, 200, { catalog: catalog.CATALOG, how, custom, season: catalog.activeSeason() }, 300);
       return true;
     }
     const m = /^\/api\/skin\/([0-9a-f-]{32,36})\.png$/.exec(url.pathname);

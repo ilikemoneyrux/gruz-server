@@ -88,6 +88,15 @@ Dla gruzclient.com/u/<nick> i gruzclient.com/top (CORS dla wszystkich, limit 90 
 
 Zbanowani i gracze z ukrytym profilem (panel → Gracze → „Ukryj profil”) nie mają profilu ani miejsca w rankingu.
 
+## Osiągnięcia, Gruz Pass i lista życzeń (od 1.8.0, progress.js)
+- **Osiągnięcia** – 15 dodatkowych odznak z paskiem postępu i jednorazową nagrodą XP (launcher: Statystyki).
+- **Gruz Pass** – co miesiąc 30 poziomów po 120 XP (XP zdobyte w danym miesiącu). Darmowe i Premium nagrody (kosmetyki) odblokowują się same.
+  Premium daje kod na `pass:premium` (panel → Kody albo `/shop-codes cosmetic:pass:premium`) – działa do końca bieżącego miesiąca.
+  Nagrody można zmienić w `promo.json` → `pass: { free: { "10": "name:fire" }, premium: { "30": "cape:galaxy" } }`.
+- **Lista życzeń** – `wish.toggle`; widzą ją znajomi i profil na stronie.
+- `GET /api/cosmetics` – katalog i sposoby zdobycia każdej rzeczy za darmo (wydarzenia, seria zadań, zaproszenia, ranking, Gruz Pass) – galeria gruzclient.com/cosmetics.
+- `/api/profile` ma też `wishlist`, `achievements: { done, total }` i `pass: { tier, tiers, premium }`.
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

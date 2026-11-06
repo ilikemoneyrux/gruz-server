@@ -1,6 +1,6 @@
 {
   "name": "gruz-server",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "description": "Serwer Gruz Client: znajomi, wiadomości, party, kosmetyki",
   "main": "server.js",
   "scripts": {

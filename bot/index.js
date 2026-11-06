@@ -188,6 +188,7 @@ module.exports = function startDiscord(ctx) {
   const cosmeticLabel = (key) => {
     const lang = cfg().lang === 'pl' ? 'pl' : 'en';
     if (key === 'all') return lang === 'pl' ? 'Wszystkie kosmetyki' : 'All cosmetics';
+    if (key === 'pass:premium') return lang === 'pl' ? 'Gruz Pass Premium (bieżący miesiąc)' : 'Gruz Pass Premium (current month)';
     const [slot, v] = key.split(':');
     const own = ctx.catalog?.customName?.(key, lang); // własna peleryna z panelu – nazwa z panelu
     if (own) return lang === 'pl' ? `${SLOT.pl[slot]} ${own}` : `${own} ${SLOT.en[slot].toLowerCase()}`;
@@ -328,7 +329,7 @@ module.exports = function startDiscord(ctx) {
   // ---------------- kody ----------------
   async function cmdCode(i) {
     const cosmetic = i.options.getString('cosmetic', true);
-    if (!ctx.LOCKED.includes(cosmetic)) return reply(i, t('unknownCosmetic'));
+    if (!(ctx.isCodeKey ? ctx.isCodeKey(cosmetic) : ctx.LOCKED.includes(cosmetic))) return reply(i, t('unknownCosmetic'));
     const target = i.options.getUser('user');
     const uses = i.options.getInteger('uses') || 1;
     const code = makeCode(cosmetic, i.options.getString('note') || `discord ${i.user.tag}${target ? ' → ' + target.tag : ''}`, uses);
@@ -344,7 +345,7 @@ module.exports = function startDiscord(ctx) {
 
   async function cmdShopCodes(i) {
     const cosmetic = i.options.getString('cosmetic', true);
-    if (!ctx.LOCKED.includes(cosmetic)) return reply(i, t('unknownCosmetic'));
+    if (!(ctx.isCodeKey ? ctx.isCodeKey(cosmetic) : ctx.LOCKED.includes(cosmetic))) return reply(i, t('unknownCosmetic'));
     const amount = Math.min(1000, Math.max(1, i.options.getInteger('amount', true)));
     await i.deferReply({ ephemeral: true });
     const d = new Date();
@@ -1532,7 +1533,7 @@ module.exports = function startDiscord(ctx) {
         const f = i.options.getFocused(true);
         const q = String(f.value || '').toLowerCase();
         if (f.name === 'cosmetic') {
-          const items = ctx.LOCKED.map((k) => ({ name: cosmeticLabel(k), value: k }))
+          const items = [...ctx.LOCKED, ...(ctx.isCodeKey ? ['pass:premium'] : [])].map((k) => ({ name: cosmeticLabel(k), value: k }))
             .filter((x) => !q || x.name.toLowerCase().includes(q) || x.value.includes(q));
           return i.respond(items.slice(0, 25));
         }

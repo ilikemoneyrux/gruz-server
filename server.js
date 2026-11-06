@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.7.1';
+const VERSION = '1.8.0';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
@@ -126,14 +126,17 @@ function updateBadges(uuid) {
   const have = BADGES.filter((b) => b.test(u)).map((b) => b.id);
   const fresh = have.filter((id) => !u.badges.includes(id));
   u.badges = have;
+  const passNew = progress.passCheck(u);
   if (fresh.length) {
+    progress.rewardXp(u, fresh);
     save();
     for (const id of fresh) {
       const b = BADGES.find((x) => x.id === id);
-      sendTo(uuid, { t: 'notify', kind: 'badge', id, names: { pl: b.pl, en: b.en } });
+      sendTo(uuid, { t: 'notify', kind: 'badge', id, names: { pl: b.pl, en: b.en }, xp: progress.xpFor(id) });
     }
-    pushMe(uuid);
+    checkLevel(u);
   }
+  if (fresh.length || passNew.length) pushMe(uuid);
 }
 /** Zmiana poziomu: powiadomienie gracza i role za poziom na Discordzie */
 const levelListeners = [];
@@ -149,7 +152,8 @@ function checkLevel(u) {
 function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
     discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u),
-    weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() } };
+    weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() },
+    achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [] };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
@@ -239,6 +243,12 @@ function useCreator(uuid, raw) {
 const catalog = require('./catalog');
 /** Do panelu admina: wszystko, na co można zrobić kod ("all" = cały katalog) */
 const LOCKED = [...catalog.ALL.filter((k) => !catalog.FREE.includes(k)), 'all'];
+/** Kody mogą też dawać Gruz Pass Premium (nie jest kosmetyką, więc nie ma go w LOCKED) */
+const isCodeKey = (k) => LOCKED.includes(k) || k === 'pass:premium';
+
+// ---------------- osiągnięcia i Gruz Pass (progress.js) ----------------
+const progress = require('./progress').setup({ db, save, xpOf, levelOf, hoursOf, dayKey, catalog, sendTo });
+BADGES.push(...progress.asBadges);
 /** Zostawia tylko to, co gracz ma odblokowane. Kolor motywu przechodzi bez zmian. */
 function cleanCosmetics(u, set) {
   return String(set || '').slice(0, 300).split(';').map((part) => {
@@ -290,6 +300,7 @@ function friendView(uuid) {
   return {
     uuid, name: u?.name || '?', cosmetics: u?.cosmetics || '', ...presenceOf(uuid),
     level: u ? levelOf(u).level : 1, badges: u?.badges || [],
+    wishlist: (u?.wishlist || []).filter((k) => !(u.unlocked || []).includes(k)),
     stats: { totalMs: u?.stats?.totalMs || 0, kills: u?.stats?.kills || 0 },
   };
 }
@@ -491,6 +502,7 @@ function claimQuest(u, id) {
   if (d.claimed.includes(id)) return { error: 'QUEST_CLAIMED' };
   if (questProgress(u, q) < q.goal) return { error: 'QUEST_NOT_DONE' };
   d.claimed.push(id);
+  u.questsDone = (u.questsDone || 0) + 1;
   u.bonusXp = (u.bonusXp || 0) + questXp(q);
   let cosmetic = null;
   if (d.ids.every((x) => d.claimed.includes(x))) {
@@ -555,12 +567,14 @@ function weeklyTick() {
       if (!u.unlocked.includes(reward.cosmetic)) { u.unlocked.push(reward.cosmetic); rewarded.push(r.uuid); sendTo(u.uuid, { t: 'unlocked', cosmetic: reward.cosmetic, unlocked: u.unlocked, weekly: true }); }
     }
   }
+  rows.forEach((r, i) => { const u = user(r.uuid); if (u) u.bestWeekly = Math.min(u.bestWeekly || 99, i + 1); });
   db.meta.lastWeekly = { week: prev, top: rows, cosmetic: reward.cosmetic || null, rewarded, at: now() };
   db.meta.history = [db.meta.lastWeekly, ...(db.meta.history || [])].slice(0, 12);
   for (const u of Object.values(db.users)) u.wk = { week: wk, xp0: xpOf(u) };
   db.meta.week = wk;
   save();
   for (const f of weeklyListeners) { try { f(db.meta.lastWeekly); } catch (e) { console.error('[weekly]', e.message); } }
+  for (const r of rows.slice(0, 3)) updateBadges(r.uuid);
   for (const uuid of online.keys()) pushMe(uuid);
 }
 setInterval(weeklyTick, 5 * 60_000);
@@ -713,6 +727,7 @@ const handlers = {
     u.stats = { totalMs: num(m.totalMs), sessions: num(m.sessions), longestMs: num(m.longestMs), kills: num(m.kills) };
     const d = dailyOf(u);
     if (d.prog.needBase) { d.prog.needBase = false; d.prog.total0 = u.stats.totalMs; d.prog.kills0 = u.stats.kills; }
+    progress.passRebase(u);
     save();
     updateBadges(c.uuid);
     questsChanged(u);
@@ -728,6 +743,17 @@ const handlers = {
       return c.send(r.ok ? { t: 'creator.result', ...r } : { t: 'error', code: r.error });
     }
     if (!entry) return c.send({ t: 'error', code: 'CODE_INVALID' });
+    if (entry.cosmetic === progress.PASS_CODE) {
+      // Gruz Pass Premium na bieżący miesiąc
+      if (entry.maxUses && entry.used.length >= entry.maxUses) return c.send({ t: 'error', code: 'CODE_EXHAUSTED' });
+      const r = progress.activatePremium(u);
+      if (r.error) return c.send({ t: 'error', code: r.error });
+      entry.used.push(c.uuid);
+      save();
+      c.send({ t: 'pass.premium', pass: progress.passView(u) });
+      updateBadges(c.uuid);
+      return pushMe(c.uuid);
+    }
     if (entry.used.includes(c.uuid) || u.unlocked.includes(entry.cosmetic)) return c.send({ t: 'error', code: 'CODE_USED' });
     if (entry.maxUses && entry.used.length >= entry.maxUses) return c.send({ t: 'error', code: 'CODE_EXHAUSTED' });
     entry.used.push(c.uuid);
@@ -944,6 +970,19 @@ const handlers = {
     for (const id of p.members) if (id !== c.uuid) sendTo(id, { t: 'notify', kind: 'partyJoined', name: user(c.uuid).name });
   },
 
+  /** Lista życzeń: kosmetyki, które gracz chciałby dostać (widać na profilu i u znajomych) */
+  'wish.toggle'(c, m) {
+    const u = user(c.uuid);
+    const key = String(m.cosmetic || '');
+    if (!catalog.exists(key) || catalog.FREE.includes(key)) return;
+    const list = u.wishlist || [];
+    if (list.includes(key)) u.wishlist = list.filter((k) => k !== key);
+    else if (!u.unlocked.includes(key)) u.wishlist = [...list, key].slice(-20);
+    save();
+    pushMe(c.uuid);
+    for (const f of u.friends) pushFriends(f);
+  },
+
   'quests.get'(c) { c.send({ t: 'quests', ...questsView(user(c.uuid)) }); },
   'quests.claim'(c, m) {
     const u = user(c.uuid);
@@ -975,7 +1014,7 @@ const handlers = {
     c.send({
       t: 'profile',
       profile: { uuid: u.uuid, name: u.name, cosmetics: u.cosmetics, stats: u.stats, firstSeen: u.firstSeen, lastSeen: u.lastSeen,
-        friends: u.friends.length, level: levelOf(u), badges: u.badges || [], ...presenceOf(u.uuid) },
+        friends: u.friends.length, level: levelOf(u), badges: u.badges || [], wishlist: (u.wishlist || []).filter((k) => !u.unlocked.includes(k)), ...presenceOf(u.uuid) },
     });
   },
 };
@@ -1080,7 +1119,7 @@ ${ok ? `<img src="https://mc-heads.net/avatar/${e(entry.leader)}/72" width="72" 
 
 /** To, czego potrzebuje panel admina */
 const adminCtx = {
-  password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, VERSION,
+  password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, isCodeKey, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
   updateBadges, pushMe, catalog, tiers, grantInviteRewards, dayKey, weekKey, weeklyXp, weeklyTop, QUESTS, streakTiers, DEFAULT_STREAK,
   bot: null, // uzupełnia bot Discord (panel "Bot")
@@ -1178,14 +1217,15 @@ setInterval(() => {
   db.shop ||= { token: '', items: {} };
   db.purchases ||= [];
   shopApi = require('./shop').setup({ db, save, user, byName, sendTo, pushMe, catalog, publicUrl, LOCKED });
-  publicApi = require('./public').setup({ db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl });
+  publicApi = require('./public').setup({ db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl,
+    streakTiers, tiers, progress });
   adminCtx.shop = shopApi;
   levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
-    db, save, online, presenceOf, levelOf, LOCKED, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
+    db, save, online, presenceOf, levelOf, LOCKED, isCodeKey, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,
     tiers, grantInviteRewards, inviteCodeOf, onInvite: (f) => inviteListeners.push(f), registerAdmin: (api) => { adminCtx.bot = api; },
     onCrash: (f) => crashListeners.push(f),
     onCrashHelp: (f) => { crashHelp = f; },
