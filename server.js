@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.8.0';
+const VERSION = '1.9.0';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
@@ -277,6 +277,27 @@ function clientsOf(uuid) { return online.get(uuid) || new Set(); }
 function sendTo(uuid, msg) { for (const c of clientsOf(uuid)) c.send(msg); }
 /** Do wszystkich połączonych (launchery i gry) */
 function sendAll(msg) { for (const set of online.values()) for (const c of set) c.send(msg); }
+
+// ---------------- tryb zgodny z serwerami MC (1.9.0) ----------------
+// Panel admina: adres serwera -> moduły Gruz, które mod wyłącza na tym serwerze (np. hypixel.net -> freelook).
+// Mod pamięta listę w configu i dopasowuje sam (subdomeny też: mc.hypixel.net pasuje do hypixel.net).
+const MODULE_IDS = ['armor', 'autogg', 'betterchat', 'blockoverlay', 'clip', 'clock', 'combo', 'coords', 'cosmetics', 'cps', 'crosshair', 'fight', 'fps', 'freecam', 'freelook', 'fullbright', 'hitboxes', 'hudtweaks', 'hitcolor', 'hitsound', 'items', 'itemphysics', 'keystrokes', 'lowfire', 'lowhp', 'menu', 'minimap', 'motionblur', 'nametags', 'oldanim', 'ping', 'potions', 'reach', 'recording', 'scoreboard', 'speed', 'tab', 'targethud', 'togglesprint', 'world', 'zoom'];
+function normHost(s) {
+  let h = String(s || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').replace(/\/.*$/, '');
+  if ((h.match(/:/g) || []).length === 1) h = h.replace(/:.*$/, '');
+  return h.replace(/\.+$/, '').replace(/[^a-z0-9.-]/g, '').slice(0, 80);
+}
+/** Reguły do wysłania do gry (bez wyłączonych i pustych) */
+function serverRules() {
+  const list = Array.isArray(db.promo?.serverRules) ? db.promo.serverRules : [];
+  return list.filter((r) => !r.off && r.match && r.block?.length).map((r) => ({ match: r.match, block: r.block }));
+}
+/** Do jednej gry (po zalogowaniu) albo do wszystkich połączonych gier (po zmianie w panelu) */
+function pushServerRules(c) {
+  const msg = { t: 'serverRules', rules: serverRules() };
+  if (c) return c.send(msg);
+  for (const set of online.values()) for (const x of set) if (x.kind === 'game') x.send(msg);
+}
 /** Własne peleryny z panelu admina (capes.js) – ustawiane przy starcie */
 let capesApi = null;
 /** Sklep Tebex (shop.js) – ustawiany przy starcie */
@@ -1160,6 +1181,7 @@ ${ok ? `<img src="https://mc-heads.net/avatar/${e(entry.leader)}/72" width="72" 
 const adminCtx = {
   password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, isCodeKey, VERSION,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
+  MODULE_IDS, normHost, pushServerRules,
   updateBadges, pushMe, catalog, tiers, grantInviteRewards, dayKey, weekKey, weeklyXp, weeklyTop, QUESTS, streakTiers, DEFAULT_STREAK,
   bot: null, // uzupełnia bot Discord (panel "Bot")
 };
@@ -1210,6 +1232,7 @@ wss.on('connection', (ws, req) => {
         if (today) today.peak = Math.max(today.peak || 0, online.size);
         c.send({ t: 'welcome', uuid: c.uuid, name: c.name, party: partyOf.has(c.uuid) ? partyView(parties.get(partyOf.get(c.uuid))) : null,
           me: meView(user(c.uuid)), quests: questsView(user(c.uuid)) });
+        if (c.kind === 'game') pushServerRules(c);
         pushFriends(c.uuid);
         announce(c.uuid);
         return;

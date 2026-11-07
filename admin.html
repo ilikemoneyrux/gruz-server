@@ -132,6 +132,7 @@
       <button data-tab="promo">Partnerzy i reklamy</button>
       <button data-tab="creators">Twórcy</button>
       <button data-tab="invites">Zaproszenia</button>
+      <button data-tab="rules">Serwery MC</button>
       <button data-tab="quests">Zadania i ranking</button>
       <button data-tab="bot">Bot Discord</button>
       <button data-tab="crashes">Crashe</button>
@@ -364,6 +365,17 @@
     <div class="card"><h2>Najwięcej zaproszeń <span class="muted" id="inv-total"></span></h2><table><thead><tr><th>Gracz</th><th>Kod</th><th>Zaproszonych</th></tr></thead><tbody id="inv-top"></tbody></table></div>
   </section>
 
+  <section data-panel="rules" hidden>
+    <div class="card">
+      <h2>Tryb zgodny z serwerami</h2>
+      <p class="muted">Na serwerze z listy mod Gruz sam wyłącza wybrane moduły (gracz dostaje info na czacie, a po wyjściu z serwera moduły wracają). Adres pasuje też do subdomen: <span class="code">hypixel.net</span> obejmuje <span class="code">mc.hypixel.net</span>. Zmiany trafiają od razu do wszystkich gier połączonych z serwerem Gruz (mod 0.5.4+).</p>
+      <div id="rules"></div>
+      <div class="row" style="margin-top:6px"><button class="ghost" id="rule-add">+ Dodaj serwer</button></div>
+      <p class="muted" style="margin-top:10px">Moduły (kliknij, żeby dodać do ostatnio zaznaczonego serwera): <span id="rule-mods"></span></p>
+      <div class="row" style="margin-top:12px"><button class="btn" id="rules-save">Zapisz</button><span class="ok-msg" id="rules-ok"></span><span class="err" id="rules-err"></span></div>
+    </div>
+  </section>
+
   <section data-panel="bot" hidden>
     <div class="card bot-head" id="bot-head"></div>
     <div id="bot-body">
@@ -496,7 +508,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, capes: loadCapes, shop: loadShop, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, capes: loadCapes, shop: loadShop, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, rules: loadRules, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -865,6 +877,45 @@
       $('#inv-ok').textContent = 'Zapisano ✓';
       loadInvites();
     } catch (err) { $('#inv-err').textContent = err.message; }
+  });
+
+  // ---------- tryb zgodny z serwerami ----------
+  let ruleMods = [], ruleFocus = null;
+  function ruleRow(r = { match: '', block: [], note: '', off: false }) {
+    return `<div class="tier rule"><input data-k="match" value="${esc(r.match)}" placeholder="np. hypixel.net" style="width:170px" />
+      <input data-k="block" value="${esc((r.block || []).join(', '))}" placeholder="freelook, minimap" style="flex:1;min-width:220px" />
+      <input data-k="note" value="${esc(r.note || '')}" placeholder="notatka (np. prośba właściciela)" style="width:200px" />
+      <label class="muted" style="white-space:nowrap"><input type="checkbox" data-k="off" ${r.off ? 'checked' : ''} /> wyłączona</label>
+      <button class="ghost danger" data-rm>×</button></div>`;
+  }
+  async function loadRules() {
+    const r = await api('server-rules');
+    ruleMods = r.modules;
+    $('#rules').innerHTML = r.rules.map(ruleRow).join('') || '<p class="muted">Brak serwerów – wszystkie moduły działają wszędzie.</p>';
+    $('#rule-mods').innerHTML = ruleMods.map((m) => `<button class="ghost" data-mod="${esc(m)}" style="padding:2px 8px;margin:2px">${esc(m)}</button>`).join('');
+  }
+  $('#rule-add').addEventListener('click', () => { if (!$('#rules .rule')) $('#rules').innerHTML = ''; $('#rules').insertAdjacentHTML('beforeend', ruleRow()); ruleFocus = $('#rules .rule:last-child [data-k="block"]'); });
+  $('#rules').addEventListener('click', (e) => { if (e.target.dataset.rm !== undefined) e.target.closest('.rule').remove(); });
+  $('#rules').addEventListener('focusin', (e) => { const row = e.target.closest('.rule'); if (row) ruleFocus = row.querySelector('[data-k="block"]'); });
+  $('#rule-mods').addEventListener('click', (e) => {
+    const m = e.target.dataset.mod; if (!m) return;
+    if (!ruleFocus || !ruleFocus.isConnected) ruleFocus = $('#rules .rule:last-child [data-k="block"]');
+    if (!ruleFocus) return;
+    const cur = ruleFocus.value.split(/[\s,;]+/).filter(Boolean);
+    if (!cur.includes(m)) cur.push(m);
+    ruleFocus.value = cur.join(', ');
+  });
+  $('#rules-save').addEventListener('click', async () => {
+    $('#rules-ok').textContent = ''; $('#rules-err').textContent = '';
+    try {
+      const rules = [...document.querySelectorAll('#rules .rule')].map((d) => ({
+        match: d.querySelector('[data-k="match"]').value, block: d.querySelector('[data-k="block"]').value,
+        note: d.querySelector('[data-k="note"]').value, off: d.querySelector('[data-k="off"]').checked }));
+      const r = await api('server-rules', { method: 'POST', body: { rules } });
+      const lost = rules.length - r.rules.length;
+      $('#rules-ok').textContent = 'Zapisano ✓' + (lost > 0 ? ` (pominięto ${lost}: zły adres albo powtórka)` : '');
+      loadRules();
+    } catch (err) { $('#rules-err').textContent = err.message; }
   });
 
   // ---------- bot ----------

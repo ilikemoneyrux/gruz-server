@@ -10,4 +10,6 @@ module.exports = {
   7794331: 'trail:shards', 7794334: 'trail:sparks', 7794335: 'trail:stars', 7794337: 'trail:witch',
   7794338: 'pet:crystal',
   7794340: 'name:rainbow', 7794343: 'name:neon', 7794346: 'name:gold', 7794347: 'name:fire', 7794348: 'name:frost',
+  // 7.11: Gruz Pass Premium (9.99 €) i płatne emotki we dwoje (1.49 €)
+  7796600: 'pass:premium', 7796603: 'emote:highfive', 7796604: 'emote:hug', 7796610: 'emote:duodance',
 };

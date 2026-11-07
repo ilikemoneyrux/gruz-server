@@ -102,6 +102,10 @@ Zbanowani i gracze z ukrytym profilem (panel → Gracze → „Ukryj profil”) 
 - **Emotki we dwoje** (płatne) – kody `emote:highfive`, `emote:hug`, `emote:duodance` (panel → Kody albo `/shop-codes`). `duo.invite` (zaprasza właściciel emotki, drugi gracz musi być na tym samym serwerze Minecraft) → `duo.accept` → `duo.start` do wszystkich graczy Gruz na serwerze. Zaproszenie ważne 20 s.
 - **Bot** – ogłoszenie nowej wersji bierze listę zmian z `https://gruzclient.com/changelog.json` (zmienna `GRUZ_CHANGELOG_URL`), gdy opis release na GitHubie jest pusty; `/gruz-admin config shop-channel` – posty o nowych pakietach i promocjach w Tebexie (co 15 min, przycisk BUY NOW; mapa pakietów w `codepkgs.js`); +200 XP za pierwsze `/gruz link`.
 
+## Tryb zgodny z serwerami (od 1.9.0)
+
+Panel → **Serwery MC**: adres serwera Minecraft (np. `hypixel.net`, pasuje też `mc.hypixel.net`) i lista modułów Gruz, które mod wyłącza na tym serwerze (np. `freelook, minimap`). Lista leży w `db.promo.serverRules`, gra dostaje ją po zalogowaniu (`{t:"serverRules", rules:[{match, block}]}`) i po każdej zmianie w panelu. Mod 0.5.4+ pamięta ją w configu i dopasowuje sam; zapisany wybór gracza nie znika – moduły wracają po wyjściu z serwera.
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

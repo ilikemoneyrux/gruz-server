@@ -583,7 +583,7 @@ module.exports = function startDiscord(ctx) {
       const ch = await client.channels.fetch(chId);
       for (const { p, kind, off } of posts.slice(0, 5)) {
         const key = ctx.codePackages?.[p.id];
-        const url = `${SITE}/cosmetics${key ? '#' + key : ''}`;
+        const url = `${SITE}/cosmetics${key ? '#' + (key === 'pass:premium' ? 'pass' : key) : ''}`;
         const price = new Intl.NumberFormat(cfg().lang === 'pl' ? 'pl-PL' : 'en-GB', { style: 'currency', currency: p.currency || 'EUR' }).format(p.total_price ?? p.base_price);
         const desc = String(p.description || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim().split(/(?<=\.)\s/)[0] || '';
         const e = new EmbedBuilder().setColor(kind === 'sale' ? 0xff7a1a : COLOR).setURL(url)

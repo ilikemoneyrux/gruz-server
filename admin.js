@@ -214,6 +214,29 @@ async function route(req, res, url, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    // ---------- tryb zgodny z serwerami MC ----------
+    if (p === '/admin/api/server-rules' && req.method === 'GET') {
+      return json(res, 200, { rules: db.promo.serverRules || [], modules: ctx.MODULE_IDS });
+    }
+    if (p === '/admin/api/server-rules' && req.method === 'POST') {
+      const b = await readBody(req);
+      const seen = new Set();
+      const rules = [];
+      for (const x of Array.isArray(b.rules) ? b.rules : []) {
+        const match = ctx.normHost(x.match);
+        if (!match || !match.includes('.') || seen.has(match)) continue;
+        const raw = Array.isArray(x.block) ? x.block : String(x.block || '').split(/[\s,;]+/);
+        const block = [...new Set(raw.map((m) => String(m).trim().toLowerCase()).filter((m) => ctx.MODULE_IDS.includes(m)))];
+        seen.add(match);
+        rules.push({ match, block, note: String(x.note || '').slice(0, 120), off: !!x.off });
+        if (rules.length >= 200) break;
+      }
+      db.promo.serverRules = rules;
+      ctx.save();
+      ctx.pushServerRules();
+      return json(res, 200, { ok: true, rules });
+    }
+
     // ---------- zaproszenia znajomych ----------
     if (p === '/admin/api/invites' && req.method === 'GET') {
       const top = users.filter((u) => (u.invited || []).length).sort((a, b) => b.invited.length - a.invited.length).slice(0, 15)
