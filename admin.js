@@ -214,6 +214,16 @@ async function route(req, res, url, ctx) {
       return json(res, 200, { ok: true });
     }
 
+    // ---------- screeny z gry (gruzclient.com/s/<id>) ----------
+    if (p === '/admin/api/shots' && req.method === 'GET') {
+      return json(res, 200, { shots: ctx.shots ? ctx.shots.list() : [] });
+    }
+    if (p === '/admin/api/shots/delete' && req.method === 'POST') {
+      const b = await readBody(req);
+      const ok = ctx.shots ? await ctx.shots.remove(String(b.id || '')) : false;
+      return json(res, ok ? 200 : 404, { ok });
+    }
+
     // ---------- tryb zgodny z serwerami MC ----------
     if (p === '/admin/api/server-rules' && req.method === 'GET') {
       return json(res, 200, { rules: db.promo.serverRules || [], modules: ctx.MODULE_IDS });

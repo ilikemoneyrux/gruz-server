@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.9.0';
+const VERSION = '1.10.0';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
@@ -33,10 +33,11 @@ const db = {
   capes: {},    // id -> { id, pl, en, unlock, level, ver, created } – własne peleryny z panelu (obrazki osobno, capes.js)
   shop: { token: '', items: {} }, // sklep Tebex: publiczny token i pakiet -> kosmetyka (shop.js)
   purchases: [], // zakupy z webhooków Tebexa (najnowsze na początku)
+  shots: [],     // screeny z gry: [{ id, uuid, at, w, h, server, size }] – obrazki osobno (shots.js)
 };
 const FILES = [['users.json', 'users'], ['dms.json', 'dms'], ['codes.json', 'codes'], ['news.json', 'news'],
   ['servers.json', 'servers'], ['discord.json', 'discord'], ['crashes.json', 'crashes'], ['promo.json', 'promo'], ['creators.json', 'creators'],
-  ['meta.json', 'meta'], ['metrics.json', 'metrics'], ['capes.json', 'capes'], ['shop.json', 'shop'], ['purchases.json', 'purchases']];
+  ['meta.json', 'meta'], ['metrics.json', 'metrics'], ['capes.json', 'capes'], ['shop.json', 'shop'], ['purchases.json', 'purchases'], ['shots.json', 'shots']];
 let saveTimer = null, saving = false, again = false;
 function save() {
   clearTimeout(saveTimer);
@@ -304,6 +305,8 @@ let capesApi = null;
 let shopApi = null;
 /** Publiczne API strony: profile i ranking (public.js) */
 let publicApi = null;
+/** Screeny z gry: gruzclient.com/s/<id> (shots.js) */
+let shotsApi = null;
 /** Publiczny adres tego serwera (Render podaje go sam w RENDER_EXTERNAL_URL) */
 const publicUrl = (p) => (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/+$/, '') + p;
 function isOnline(uuid) { return clientsOf(uuid).size > 0; }
@@ -344,6 +347,40 @@ function announce(uuid) {
   const u = user(uuid);
   if (!u) return;
   for (const f of u.friends) if (isOnline(f)) sendTo(f, { t: 'friend.status', friend: friendView(uuid) });
+}
+
+// ---------------- promocje z listy życzeń (1.10.0) ----------------
+// Co 15 minut i po zalogowaniu: kosmetyka z listy życzeń ma promocję w Tebexie (min. 5%) -> powiadomienie
+// w launcherze i w grze. Każdą promocję zgłaszamy raz (u.wishSale: kosmetyka -> % zniżki); gdy promocja
+// się skończy, wpis znika i następna promocja znów da powiadomienie. Offline = powiadomienie po zalogowaniu.
+async function wishSaleCheck(only) {
+  if (!shopApi) return;
+  let list = [];
+  try { list = await shopApi.publicList(); } catch { return; }
+  const sale = {};
+  for (const p of list) {
+    const base = Number(p.price) + Number(p.discount || 0);
+    const off = base > 0 && p.discount > 0 ? Math.round((p.discount / base) * 100) : 0;
+    if (off >= 5) sale[p.cosmetic] = { off, packageId: p.packageId, price: p.price, currency: p.currency,
+      names: p.label || { en: p.name, pl: p.name } };
+  }
+  let changed = false;
+  for (const u of only || Object.values(db.users)) {
+    if (!u || !(u.wishlist || []).length && !u.wishSale) continue;
+    const seen = u.wishSale || {};
+    for (const k of Object.keys(seen)) if (!sale[k]) { delete seen[k]; changed = true; }
+    if (!isOnline(u.uuid)) { if (!Object.keys(seen).length) delete u.wishSale; continue; }
+    for (const k of u.wishlist || []) {
+      const s = sale[k];
+      if (!s || seen[k] === s.off || (u.unlocked || []).includes(k) || (u.unlocked || []).includes('all')) continue;
+      seen[k] = s.off;
+      changed = true;
+      sendTo(u.uuid, { t: 'notify', kind: 'wishSale', cosmetic: k, name: s.names.en, names: s.names, off: s.off,
+        packageId: s.packageId, price: s.price, currency: s.currency });
+    }
+    if (Object.keys(seen).length) u.wishSale = seen; else delete u.wishSale;
+  }
+  if (changed) save();
 }
 
 // ---------------- pokoje (gracze Gruz na tym samym serwerze MC) ----------------
@@ -711,6 +748,12 @@ const handlers = {
     try { c.send({ t: 'shop.checkout', gift: user(to).name, ...(await shopApi.buy({ uuid: to, ip: c.ip }, m.packageId, undefined, me)) }); }
     catch (e) { console.warn('[shop] prezent:', e.message); c.send({ t: 'shop.error', code: String(e.message).startsWith('SHOP_') ? String(e.message).split(':')[0] : 'SHOP_TEBEX' }); }
   },
+  /** Screen z gry (mod 0.5.5+): JPEG w base64 -> link gruzclient.com/s/<id> */
+  'shot.upload'(c, m) {
+    if (!shotsApi) return c.send({ t: 'shot.error', code: 'SHOT_SAVE' });
+    shotsApi.upload(c, m).catch((e) => { console.error('[shots]', e.message); c.send({ t: 'shot.error', code: 'SHOT_SAVE' }); });
+  },
+
   presence(c, m) {
     const state = String(m.state || 'launcher').slice(0, 20);
     const server = m.server ? String(m.server).slice(0, 80) : null;
@@ -1122,6 +1165,12 @@ const server = http.createServer((req, res) => {
       .catch((e) => { console.error('[shop]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
     return;
   }
+  if (url.pathname.startsWith('/api/shot/')) {
+    if (!shotsApi) { res.writeHead(503); return res.end(); }
+    shotsApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
+      .catch((e) => { console.error('[shots]', e.message); if (!res.headersSent) res.writeHead(500); res.end(); });
+    return;
+  }
   if (url.pathname.startsWith('/api/')) {
     if (!publicApi) { res.writeHead(503); return res.end(); }
     publicApi.http(req, res, url).then((ok) => { if (!ok) { res.writeHead(404); res.end(); } })
@@ -1187,7 +1236,7 @@ const adminCtx = {
 };
 
 
-const wss = new WebSocketServer({ server, maxPayload: 600 * 1024 }); // wiadomości głosowe do ~20 s
+const wss = new WebSocketServer({ server, maxPayload: 1024 * 1024 }); // wiadomości głosowe do ~20 s i screeny (~700 KB)
 
 wss.on('connection', (ws, req) => {
   const c = {
@@ -1235,6 +1284,7 @@ wss.on('connection', (ws, req) => {
         if (c.kind === 'game') pushServerRules(c);
         pushFriends(c.uuid);
         announce(c.uuid);
+        setTimeout(() => wishSaleCheck([user(c.uuid)]), 4000); // promocje z listy życzeń (gdy był offline)
         return;
       }
       return;
@@ -1282,6 +1332,9 @@ setInterval(() => {
   publicApi = require('./public').setup({ db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl,
     streakTiers, tiers, progress });
   adminCtx.shop = shopApi;
+  shotsApi = require('./shots').setup({ db, save, user, storage, publicUrl });
+  adminCtx.shots = shotsApi;
+  setInterval(() => wishSaleCheck(), 15 * 60_000);
   levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));

@@ -106,6 +106,11 @@ Zbanowani i gracze z ukrytym profilem (panel → Gracze → „Ukryj profil”) 
 
 Panel → **Serwery MC**: adres serwera Minecraft (np. `hypixel.net`, pasuje też `mc.hypixel.net`) i lista modułów Gruz, które mod wyłącza na tym serwerze (np. `freelook, minimap`). Lista leży w `db.promo.serverRules`, gra dostaje ją po zalogowaniu (`{t:"serverRules", rules:[{match, block}]}`) i po każdej zmianie w panelu. Mod 0.5.4+ pamięta ją w configu i dopasowuje sam; zapisany wybór gracza nie znika – moduły wracają po wyjściu z serwera.
 
+## Screeny i promocje z listy życzeń (od 1.10.0)
+
+- **Screeny** (`shots.js`): mod 0.5.5+ po F2 pokazuje na czacie „Udostępnij link” (albo `.share`) i wysyła JPEG przez WebSocket (`{t:"shot.upload", data, w, h, server}`, maks. ~700 KB – dlatego `maxPayload` to 1 MB). Odpowiedź `{t:"shot.done", id, url}` – link `https://gruzclient.com/s/<id>` (strona `s/index.html`). Publicznie: `GET /api/shot/<id>` (dane: nick, data, serwer) i `/api/shot/<id>.jpg`. Obrazki leżą w bazie jako blob `shot:<id>`, lista w `shots.json`. Limity: 15 na gracza na dobę, 30 dni, maks. 400 (najstarsze znikają). Gracz z prywatnym profilem jest bez nicku, zbanowany = 404. Panel → **Screeny**: podgląd i usuwanie.
+- **Promocje z listy życzeń**: co 15 minut i po zalogowaniu serwer sprawdza pakiety Tebexa – kosmetyka z listy życzeń z co najmniej 5% zniżki daje `{t:"notify", kind:"wishSale", cosmetic, names, off, packageId}` (launcher 0.6.7: dymek i powiadomienie systemowe, mod 0.5.5: wiadomość na czacie z linkiem). Każdą promocję zgłaszamy raz (`u.wishSale`), koniec promocji czyści wpis.
+
 ## Darmowy hosting: Render + Neon
 
 1. **Baza (Neon)**: załóż konto na neon.tech, utwórz projekt i skopiuj *connection string* (zaczyna się od `postgresql://`).

@@ -133,6 +133,7 @@
       <button data-tab="creators">Twórcy</button>
       <button data-tab="invites">Zaproszenia</button>
       <button data-tab="rules">Serwery MC</button>
+      <button data-tab="shots">Screeny</button>
       <button data-tab="quests">Zadania i ranking</button>
       <button data-tab="bot">Bot Discord</button>
       <button data-tab="crashes">Crashe</button>
@@ -376,6 +377,14 @@
     </div>
   </section>
 
+  <section data-panel="shots" hidden>
+    <div class="card">
+      <h2>Screeny z gry</h2>
+      <p class="muted">Gracze udostępniają zrzuty ekranu z gry (przycisk po F2 albo <span class="code">.share</span>) – link <span class="code">gruzclient.com/s/…</span>. Limit 15 dziennie na gracza, trzymane 30 dni (maks. 400). Usuń wszystko, co łamie zasady.</p>
+      <div id="shots" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px"></div>
+    </div>
+  </section>
+
   <section data-panel="bot" hidden>
     <div class="card bot-head" id="bot-head"></div>
     <div id="bot-body">
@@ -508,7 +517,7 @@
     if (!b) return;
     document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b));
     document.querySelectorAll('[data-panel]').forEach((p) => { p.hidden = p.dataset.panel !== b.dataset.tab; });
-    ({ overview: loadStats, users: loadUsers, codes: loadCodes, capes: loadCapes, shop: loadShop, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, rules: loadRules, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
+    ({ overview: loadStats, users: loadUsers, codes: loadCodes, capes: loadCapes, shop: loadShop, news: loadNews, promo: loadPromo, creators: loadCreators, crashes: loadCrashes, invites: loadInvites, rules: loadRules, shots: loadShots, bot: loadBot, growth: loadGrowth, quests: loadQuests })[b.dataset.tab]();
   });
 
   async function loadStats() {
@@ -916,6 +925,21 @@
       $('#rules-ok').textContent = 'Zapisano ✓' + (lost > 0 ? ` (pominięto ${lost}: zły adres albo powtórka)` : '');
       loadRules();
     } catch (err) { $('#rules-err').textContent = err.message; }
+  });
+
+  // ---------- screeny ----------
+  async function loadShots() {
+    const r = await api('shots');
+    $('#shots').innerHTML = r.shots.map((s) => `<div class="tier" style="flex-direction:column;align-items:stretch;gap:6px">
+      <a href="https://gruzclient.com/s/${esc(s.id)}" target="_blank" rel="noopener"><img src="${esc(s.img)}" loading="lazy" style="width:100%;border-radius:6px;display:block" alt="" /></a>
+      <div class="muted">${esc(s.name)} · ${new Date(s.at).toLocaleString('pl-PL')}${s.server ? ' · ' + esc(s.server) : ''} · ${Math.round((s.size || 0) / 1024)} KB</div>
+      <button class="ghost danger" data-shot="${esc(s.id)}">Usuń</button></div>`).join('') || '<p class="muted">Jeszcze nikt nie udostępnił screena.</p>';
+  }
+  $('#shots').addEventListener('click', async (e) => {
+    const id = e.target.dataset.shot; if (!id) return;
+    if (!confirm('Usunąć ten screen? Link przestanie działać.')) return;
+    await api('shots/delete', { method: 'POST', body: { id } });
+    loadShots();
   });
 
   // ---------- bot ----------
