@@ -1599,7 +1599,7 @@ module.exports = function startDiscord(ctx) {
   });
 
   // ---------------- router ----------------
-  client.on('interactionCreate', async (i) => {
+  const route = async (i) => {
     try {
       if (i.isAutocomplete()) {
         const f = i.options.getFocused(true);
@@ -1700,7 +1700,14 @@ module.exports = function startDiscord(ctx) {
       console.error('[discord]', e);
       if (i.isRepliable?.()) reply(i, t('err')).catch(() => {});
     }
-  });
+  };
+  // komendy zwracają obietnicę bez await, więc ich błędy (np. wygasła interakcja po uśpieniu hostingu) łapiemy tutaj –
+  // inaczej jako nieobsłużone odrzucenie wyłączały cały serwer
+  client.on('interactionCreate', (i) => route(i).catch((e) => {
+    console.error('[discord]', e.message);
+    if (i.isRepliable?.()) reply(i, t('err')).catch(() => {});
+  }));
+  client.on('error', (e) => console.error('[discord] błąd połączenia:', e.message));
 
   // ---------------- lista grających na kanale ----------------
   let statusMsg = null;

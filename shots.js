@@ -1,13 +1,14 @@
 // Screeny z gry (od 1.10.0): gracz klika „Udostępnij” po zrzucie ekranu (F2) albo wpisuje .share,
 // mod wysyła JPEG przez WebSocket (shot.upload), a serwer oddaje link https://gruzclient.com/s/<id>.
 // Obrazki leżą w bazie jako blob „shot” (storage.putBlob), lista w db.shots (shots.json).
-// Limity: 15 screenów dziennie na gracza, 30 dni przechowywania, maks. 400 na serwerze (najstarsze znikają).
+// Limity: 15 screenów dziennie na gracza, 30 dni przechowywania, maks. 400 sztuk i 120 MB na serwerze (najstarsze znikają).
 const crypto = require('crypto');
 
 const MAX_B64 = 940 * 1024;     // ~700 KB JPEG (WebSocket przyjmuje do 1 MB)
 const PER_DAY = 15;
 const KEEP_MS = 30 * 24 * 3600_000;
 const MAX_TOTAL = 400;
+const MAX_BYTES = 120 * 1024 * 1024; // darmowa baza Neon ma 0,5 GB na wszystko (base64 zajmuje 4/3 tego)
 const SITE = 'https://gruzclient.com';
 
 function setup(ctx) {
@@ -22,6 +23,8 @@ function setup(ctx) {
     for (const s of db.shots) (t0 - s.at > KEEP_MS ? drop : keep).push(s);
     keep.sort((a, b) => b.at - a.at);
     drop.push(...keep.splice(MAX_TOTAL));
+    let bytes = keep.reduce((n, s) => n + (s.size || 0), 0);
+    while (bytes > MAX_BYTES && keep.length > 1) { const s = keep.pop(); bytes -= s.size || 0; drop.push(s); }
     if (!drop.length) return;
     db.shots = keep;
     for (const s of drop) storage.delBlob('shot', s.id).catch(() => {});
@@ -54,19 +57,25 @@ function setup(ctx) {
       server: m.server ? String(m.server).toLowerCase().replace(/[^a-z0-9.:-]/g, '').slice(0, 80) : null,
       size: buf.length,
     };
-    try { await storage.putBlob('shot', id, buf); }
-    catch (e) { console.error('[shots]', e.message); return c.send({ t: 'shot.error', code: 'SHOT_SAVE' }); }
+    // wpis przed zapisem obrazka: kilka wysyłek naraz nie ominie limitu dziennego
     db.shots.unshift(shot);
+    try { await storage.putBlob('shot', id, buf); }
+    catch (e) {
+      db.shots = db.shots.filter((x) => x !== shot);
+      console.error('[shots]', e.message);
+      return c.send({ t: 'shot.error', code: 'SHOT_SAVE' });
+    }
     save();
     cleanup();
     c.send({ t: 'shot.done', id, url: `${SITE}/s/${id}` });
   }
 
+  /** Publiczne dane screena. Adresu serwera MC nie podajemy (zostaje tylko w panelu) – link może trafić do każdego. */
   function view(s) {
     const u = user(s.uuid);
     const shown = u && !u.privateProfile;
     return {
-      id: s.id, at: s.at, w: s.w, h: s.h, server: s.server,
+      id: s.id, at: s.at, w: s.w, h: s.h,
       name: shown ? u.name : null, uuid: shown ? u.uuid : null,
       img: publicUrl(`/api/shot/${s.id}.jpg`),
     };
@@ -97,7 +106,7 @@ function setup(ctx) {
 
   // ---------- panel admina ----------
   function list(n = 120) {
-    return db.shots.slice(0, n).map((s) => ({ ...view(s), name: user(s.uuid)?.name || '?', uuid: s.uuid, size: s.size }));
+    return db.shots.slice(0, n).map((s) => ({ ...view(s), server: s.server, name: user(s.uuid)?.name || '?', uuid: s.uuid, size: s.size }));
   }
   async function remove(id) {
     const s = byId(id);

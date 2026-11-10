@@ -41,7 +41,14 @@ async function put(key, text) {
   fs.renameSync(tmp, file);
 }
 
-async function save(name, value) { await put(name, JSON.stringify(value)); }
+// zapis leci po każdej zmianie dla wszystkich plików naraz – nie ruszamy bazy, gdy treść się nie zmieniła
+const lastSaved = new Map();
+async function save(name, value) {
+  const text = JSON.stringify(value);
+  if (lastSaved.get(name) === text) return;
+  await put(name, text);
+  lastSaved.set(name, text);
+}
 
 // ---------------- wiadomości głosowe ----------------
 async function putVoice(id, base64) {
