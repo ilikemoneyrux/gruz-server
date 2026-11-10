@@ -10,9 +10,10 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.10.0';
+const VERSION = '1.10.1';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
+const STATS_SLACK = Number(process.env.GRUZ_STATS_SLACK) || 10 * 60_000; // zapas przy limicie przyrostu statystyk (testy ustawiają duży)
 const ADMIN_PASSWORD = process.env.GRUZ_ADMIN_PASSWORD || '';
 const storage = require('./storage');
 
@@ -755,8 +756,8 @@ const handlers = {
   },
 
   presence(c, m) {
-    const state = String(m.state || 'launcher').slice(0, 20);
-    const server = m.server ? String(m.server).slice(0, 80) : null;
+    const state = String(m.state || 'launcher').replace(/[^a-z]/gi, '').slice(0, 20) || 'launcher';
+    const server = m.server ? String(m.server).replace(/[^\w.:-]/g, '').slice(0, 80) || null : null;
     const changed = state !== c.presence.state || server !== c.presence.server;
     c.presence = { state, server, since: changed ? now() : c.presence.since };
     announce(c.uuid);
@@ -811,7 +812,7 @@ const handlers = {
   },
 
   emote(c, m) {
-    const id = String(m.id || '').slice(0, 20);
+    const id = String(m.id || '').replace(/[^\w-]/g, '').slice(0, 20);
     const key = roomKey(c);
     if (key) for (const o of roomMembers(key)) if (o !== c) o.send({ t: 'emote', uuid: c.uuid, id });
   },
@@ -819,7 +820,19 @@ const handlers = {
   stats(c, m) {
     const u = user(c.uuid);
     const num = (v) => Math.max(0, Math.min(1e13, Number(v) || 0));
-    u.stats = { totalMs: num(m.totalMs), sessions: num(m.sessions), longestMs: num(m.longestMs), kills: num(m.kills) };
+    const next = { totalMs: num(m.totalMs), sessions: num(m.sessions), longestMs: num(m.longestMs), kills: num(m.kills) };
+    if (u.statsAt && u.stats) {
+      // od drugiego raportu: czasu gry nie przybywa szybciej niż zegara (+10 min zapasu), killi najwyżej 30 na minutę;
+      // nic też nie ubywa – drugi komputer albo reinstalacja launchera (liczniki od zera) nie kasują poziomu
+      const gap = now() - u.statsAt + STATS_SLACK;
+      const cap = (k, max) => { next[k] = Math.max(u.stats[k] || 0, Math.min(next[k], (u.stats[k] || 0) + max)); };
+      cap('totalMs', gap);
+      cap('kills', Math.ceil(gap / 60_000) * 30);
+      next.sessions = Math.max(next.sessions, u.stats.sessions || 0);
+      next.longestMs = Math.max(next.longestMs, u.stats.longestMs || 0);
+    }
+    u.statsAt = now();
+    u.stats = next;
     const d = dailyOf(u);
     if (d.prog.needBase) { d.prog.needBase = false; d.prog.total0 = u.stats.totalMs; d.prog.kills0 = u.stats.kills; }
     progress.passRebase(u);
@@ -1125,7 +1138,7 @@ const handlers = {
 // ---------------- weryfikacja konta (Mojang hasJoined) ----------------
 async function verify(name, serverId) {
   const url = `${MOJANG}?username=${encodeURIComponent(name)}&serverId=${encodeURIComponent(serverId)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
   if (res.status !== 200) return null;
   const p = await res.json();
   return { uuid: dashed(p.id), name: p.name };
@@ -1237,6 +1250,7 @@ const adminCtx = {
 
 
 const wss = new WebSocketServer({ server, maxPayload: 1024 * 1024 }); // wiadomości głosowe do ~20 s i screeny (~700 KB)
+wss.on('error', (e) => console.error('[wss]', e.message));
 
 wss.on('connection', (ws, req) => {
   const c = {
@@ -1246,6 +1260,11 @@ wss.on('connection', (ws, req) => {
     send(msg) { if (ws.readyState === 1) ws.send(JSON.stringify(msg)); },
   };
   ws.on('pong', () => { c.alive = true; });
+  // bez tego za duża wiadomość (ponad maxPayload) wyłączała cały serwer – 'error' bez słuchacza zabija proces
+  ws.on('error', (e) => console.warn('[ws]', e.code || e.message));
+  // kto nie zaloguje się w 30 s, jest rozłączany (niezalogowani nie dostają pingów, więc wisieliby bez końca)
+  const authTimer = setTimeout(() => { if (!c.uuid) ws.close(4001, 'auth'); }, 30_000);
+  ws.on('close', () => clearTimeout(authTimer));
 
   ws.on('message', async (raw) => {
     // prosty limit: 40 wiadomości na 5 sekund; duże (głosowe) liczą się jak 10
@@ -1352,6 +1371,15 @@ setInterval(() => {
 })().catch((e) => { console.error('Nie udało się uruchomić serwera:', e); process.exit(1); });
 
 // przy zamykaniu (np. restart na hostingu) zapisujemy od razu
-for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => { clearTimeout(saveTimer); await flush(); process.exit(0); });
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, async () => {
+  clearTimeout(saveTimer);
+  // trwający zapis musi się skończyć, inaczej flush() od razu wraca i ostatnie zmiany giną
+  for (let i = 0; saving && i < 100; i++) await new Promise((r) => setTimeout(r, 50));
+  await flush();
+  process.exit(0);
+});
+// błąd w jednym miejscu nie może wyłączyć serwera wszystkim graczom
+process.on('uncaughtException', (e) => console.error('[uncaught]', e));
+process.on('unhandledRejection', (e) => console.error('[unhandled]', e));
 
 module.exports = { server, db, handlers, levelOf, cleanCosmetics, serverKey };
