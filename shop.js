@@ -117,7 +117,8 @@ function setup(ctx) {
     const basket = await basketRes.json().catch(() => ({}));
     if (!basketRes.ok || !basket.data?.ident) throw new Error('SHOP_TEBEX:' + (basket.detail || basket.message || basketRes.status));
     const ident = basket.data.ident;
-    const addRes = await fetch(`${API}/${encodeURIComponent(t)}/baskets/${encodeURIComponent(ident)}/packages`, {
+    // dodawanie do koszyka: /api/baskets/<ident>/packages (bez /accounts/<token> – tamten adres daje 404)
+    const addRes = await fetch(`https://headless.tebex.io/api/baskets/${encodeURIComponent(ident)}/packages`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
       body: JSON.stringify({ package_id: String(packageId), quantity: 1, custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }),
     });
