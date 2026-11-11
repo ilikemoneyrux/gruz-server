@@ -24,7 +24,9 @@ function setup(ctx) {
   db.shop ||= { token: '', items: {} };       // items: packageId -> "cape:c_smok"
   db.purchases ||= [];                         // najnowsze na początku
   const secret = () => process.env.TEBEX_WEBHOOK_SECRET || '';
-  const token = () => (process.env.TEBEX_PUBLIC_TOKEN || db.shop.token || '').trim();
+  // token publiczny sklepu Gruz Client (jawny – ten sam jest w kodzie strony); panel albo TEBEX_PUBLIC_TOKEN mogą go nadpisać
+  const DEFAULT_TOKEN = '157oh-60a00012761f92517171e5eb80cd678d5ef60eb9';
+  const token = () => (process.env.TEBEX_PUBLIC_TOKEN || db.shop.token || DEFAULT_TOKEN).trim();
 
   // ---------------- dane sklepu (typ, czy włączony) – pamięć 10 min ----------------
   // Sklep "Universal (No Auth)" odrzuca nick w koszyku ("You can't set the username for this game type"),
@@ -83,15 +85,22 @@ function setup(ctx) {
     return BUILTIN_CAPES.has(v) ? publicUrl(`/shop/cape/${v}.png`) : null;
   }
 
-  /** Lista dla launchera i strony: tylko pakiety przypisane do istniejącej kosmetyki */
+  /** Pakiety sprzedawane jako kody (codepkgs.js): kupujący dostaje kod mailem i wpisuje go w launcherze */
+  const CODE_PKGS = require('./codepkgs');
+  /** Kosmetyka pakietu: przypisana w panelu (odblokowanie od razu) albo z listy kodów */
+  const cosmeticOf = (id) => db.shop.items[String(id)] || CODE_PKGS[String(id)] || null;
+  const isCodePkg = (id) => !db.shop.items[String(id)] && !!CODE_PKGS[String(id)];
+
+  /** Lista dla launchera i strony: pakiety przypisane do kosmetyki w panelu + pakiety z kodami (code: true) */
   async function publicList() {
     let list = [];
     try { list = await packages(); } catch { list = cache.list; }
-    return list.filter((p) => db.shop.items[p.id] && catalog.exists(db.shop.items[p.id]))
+    return list.filter((p) => cosmeticOf(p.id) && catalog.exists(cosmeticOf(p.id)))
       .map((p) => {
-        const cosmetic = db.shop.items[p.id];
+        const cosmetic = cosmeticOf(p.id);
         const label = catalog.customName(cosmetic, 'en') ? { en: catalog.customName(cosmetic, 'en'), pl: catalog.customName(cosmetic, 'pl') } : null;
-        return { packageId: p.id, cosmetic, slot: cosmetic.split(':')[0], name: p.name, label, price: p.price, currency: p.currency, image: p.image, preview: preview(cosmetic), discount: p.discount || 0 };
+        return { packageId: p.id, cosmetic, slot: cosmetic.split(':')[0], name: p.name, label, price: p.price, currency: p.currency, image: p.image, preview: preview(cosmetic), discount: p.discount || 0,
+          ...(isCodePkg(p.id) ? { code: true } : {}) };
       });
   }
 
@@ -102,17 +111,22 @@ function setup(ctx) {
     const t = token();
     if (!t) throw new Error('SHOP_OFF');
     const u = user(c.uuid);
-    const cosmetic = db.shop.items[String(packageId)];
+    const cosmetic = cosmeticOf(packageId);
     if (!u || !cosmetic || !catalog.exists(cosmetic)) throw new Error('SHOP_UNKNOWN');
-    if ((u.unlocked || []).includes(cosmetic) || (u.unlocked || []).includes('all')) throw new Error('SHOP_OWNED');
+    // pakiet z kodem: zwykły koszyk bez danych gracza – Tebex wysyła kod mailem, nic nie odblokowujemy sami
+    // (kod można też komuś dać, więc nie blokujemy zakupu, gdy gracz już ma tę kosmetykę)
+    const asCode = isCodePkg(packageId);
+    if (asCode) from = null;
+    if (!asCode && ((u.unlocked || []).includes(cosmetic) || (u.unlocked || []).includes('all'))) throw new Error('SHOP_OWNED');
     const info = await storeInfo().catch(() => null);
     if (info?.disabled) console.warn('[shop] sklep Tebex jest wyłączony (disabled) – płatność może nie przejść');
-    const done = returnUrl || publicUrl('/shop/done');
+    const done = returnUrl || publicUrl('/shop/done' + (asCode ? '?code=1' : ''));
     const back = (q) => done + (done.includes('?') ? '&' : '?') + q;
     const basketRes = await fetch(`${API}/${encodeURIComponent(t)}/baskets`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
-      body: JSON.stringify({ ...(info?.usernames ? { username: u.name } : {}), ip_address: c.ip || undefined, complete_url: back('done=1'), cancel_url: back('cancel=1'),
-        complete_auto_redirect: true, custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }),
+      body: JSON.stringify({ ...(info?.usernames ? { username: u.name } : {}), complete_url: back('done=1'), // bez ip_address: to pole wymaga klucza prywatnego („Basic auth credentials are required”)
+        cancel_url: back('cancel=1'),
+        complete_auto_redirect: true, ...(asCode ? {} : { custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }) }),
     });
     const basket = await basketRes.json().catch(() => ({}));
     if (!basketRes.ok || !basket.data?.ident) throw new Error('SHOP_TEBEX:' + (basket.detail || basket.message || basketRes.status));
@@ -120,7 +134,7 @@ function setup(ctx) {
     // dodawanie do koszyka: /api/baskets/<ident>/packages (bez /accounts/<token> – tamten adres daje 404)
     const addRes = await fetch(`https://headless.tebex.io/api/baskets/${encodeURIComponent(ident)}/packages`, {
       method: 'POST', headers: { 'content-type': 'application/json', accept: 'application/json' }, signal: AbortSignal.timeout(15000),
-      body: JSON.stringify({ package_id: String(packageId), quantity: 1, custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }),
+      body: JSON.stringify({ package_id: String(packageId), quantity: 1, ...(asCode ? {} : { custom: { uuid: u.uuid, cosmetic, ...(from ? { from: from.uuid, fromName: from.name } : {}) } }) }),
     });
     const added = await addRes.json().catch(() => ({}));
     if (!addRes.ok) throw new Error('SHOP_TEBEX:' + (added.detail || added.message || addRes.status));
@@ -132,7 +146,7 @@ function setup(ctx) {
       url = Array.isArray(auth) ? auth[0]?.url : auth?.data?.[0]?.url;
     }
     if (!url || !/^https:\/\//.test(url)) throw new Error('SHOP_TEBEX:no checkout link');
-    return { url, basket: ident };
+    return { url, basket: ident, ...(asCode ? { code: true } : {}) };
   }
 
   // ---------------- webhook z Tebexa ----------------
@@ -218,12 +232,14 @@ function setup(ctx) {
   /** Strona po płatności (Tebex wraca tutaj) */
   function donePage(res, url) {
     const cancel = url.searchParams.has('cancel');
+    const code = url.searchParams.has('code'); // pakiet z kodem: kod przychodzi mailem
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'x-frame-options': 'DENY' });
     res.end(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gruz Client</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#07050c;color:#f1ecf8;font:16px/1.6 system-ui,sans-serif;text-align:center}
 .c{max-width:440px;padding:32px;border:1px solid #2b2139;background:#0c0912}h1{color:#dcaaff;margin:0 0 8px}p{color:#9a8fae;margin:6px 0}</style></head>
 <body><div class="c">${cancel
   ? '<h1>Payment cancelled</h1><p>Nothing was charged. You can close this tab.</p><p>Płatność anulowana – nic nie zostało pobrane.</p>'
+  : code ? '<h1>Thank you! 💜</h1><p>Your code is on its way to your e-mail. Enter it in Gruz Client: Wardrobe → “Got a code?”.</p><p>Dziękujemy! Kod przyjdzie na Twój e-mail. Wpisz go w Gruz Client: Szafa → „Masz kod?”.</p>'
   : '<h1>Thank you! 💜</h1><p>Your item will appear in the launcher within a minute – go back to Gruz Client.</p><p>Dziękujemy! Kosmetyka pojawi się w launcherze w ciągu minuty – wróć do Gruz Client.</p>'}</div></body></html>`);
   }
 
