@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.10.1';
+const VERSION = '1.11.0';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const STATS_SLACK = Number(process.env.GRUZ_STATS_SLACK) || 10 * 60_000; // zapas przy limicie przyrostu statystyk (testy ustawiają duży)
@@ -148,14 +148,16 @@ function checkLevel(u) {
   const before = u.lvl;
   u.lvl = lv;
   save();
-  if (before && lv > before) sendTo(u.uuid, { t: 'notify', kind: 'levelUp', level: lv });
+  if (before && lv > before) sendTo(u.uuid, { t: 'notify', kind: 'levelUp', level: lv, coins: lv - before <= 2 ? coins.earn(u, coinsMod.LEVEL_COINS * (lv - before)) : 0 }); // skok o wiele poziomów naraz (pierwsze statystyki z launchera) nie daje monet
   for (const f of levelListeners) { try { f(u, lv, before || 0); } catch (e) { console.error('[level]', e.message); } }
 }
 function meView(u) {
-  return { level: levelOf(u), badges: u.badges || [], unlocked: u.unlocked || [], season: catalog.activeSeason(),
+  return { level: levelOf(u), badges: u.badges || [], unlocked: coins.effective(u), owned: u.unlocked || [], season: catalog.activeSeason(),
+    coins: u.coins || 0, shop: coins.shopView(u), plus: coins.plusView(u),
     discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u),
     weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() },
-    achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [], daily: progress.dailyView(u) };
+    achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [],
+    daily: { ...progress.dailyView(u), coins: coinsMod.DAILY_COINS } };
 }
 function pushMe(uuid) { const u = user(uuid); if (u) sendTo(uuid, { t: 'me', ...meView(u) }); }
 
@@ -248,11 +250,15 @@ const LOCKED = [...catalog.ALL.filter((k) => !catalog.FREE.includes(k)), 'all'];
 /** Kody mogą też dawać Gruz Pass Premium (nie jest kosmetyką, więc nie ma go w LOCKED) */
 /** Płatne emotki we dwoje (od 1.8.0): emote:<id> w u.unlocked, mod gra je razem z drugim graczem */
 const DUO_EMOTES = ['highfive', 'hug', 'duodance'];
-const isCodeKey = (k) => LOCKED.includes(k) || k === 'pass:premium' || DUO_EMOTES.some((id) => k === 'emote:' + id);
+const isCodeKey = (k) => LOCKED.includes(k) || k === 'pass:premium' || DUO_EMOTES.some((id) => k === 'emote:' + id) || coins.isPlusCode(k);
 
 // ---------------- osiągnięcia i Gruz Pass (progress.js) ----------------
-const progress = require('./progress').setup({ db, save, xpOf, levelOf, hoursOf, dayKey, dayBefore, catalog, sendTo });
+const progress = require('./progress').setup({ db, save, xpOf, levelOf, hoursOf, dayKey, dayBefore, catalog, sendTo, plusActive: (u) => coins.plusActive(u) });
 BADGES.push(...progress.asBadges);
+// ---------------- monety, sklep rotacyjny i Gruz+ (coins.js) ----------------
+const coinsMod = require('./coins');
+const coins = coinsMod.setup({ db, save, catalog, dayKey, weekKey });
+BADGES.push({ id: 'plus', pl: 'Gruz+', en: 'Gruz+', test: (u) => coins.plusActive(u) });
 /** Zostawia tylko to, co gracz ma odblokowane. Kolor motywu przechodzi bez zmian. */
 function cleanCosmetics(u, set) {
   return String(set || '').slice(0, 300).split(';').map((part) => {
@@ -261,7 +267,7 @@ function cleanCosmetics(u, set) {
     if (slot === 'color') return /^[0-9a-f]{6}$/i.test(value || '') ? `color=${value}` : null;
     if (!catalog.CATALOG[slot]) return null;
     const v = value || 'none';
-    return `${slot}=${catalog.allowed(`${slot}:${v}`, u.unlocked || []) ? v : 'none'}`;
+    return `${slot}=${catalog.allowed(`${slot}:${v}`, coins.effective(u)) ? v : 'none'}`; // w czasie Gruz+ także rzeczy z rotacji
   }).filter(Boolean).join(';');
 }
 
@@ -326,7 +332,7 @@ function friendView(uuid) {
   const u = user(uuid);
   return {
     uuid, name: u?.name || '?', cosmetics: u?.cosmetics || '', ...presenceOf(uuid),
-    level: u ? levelOf(u).level : 1, badges: u?.badges || [],
+    level: u ? levelOf(u).level : 1, badges: u?.badges || [], plus: coins.plusActive(u),
     wishlist: (u?.wishlist || []).filter((k) => !(u.unlocked || []).includes(k)),
     stats: { totalMs: u?.stats?.totalMs || 0, kills: u?.stats?.kills || 0 },
   };
@@ -526,7 +532,7 @@ function questsView(u) {
     day: d.day, resetsAt: nextMidnight(),
     quests: d.ids.map((id) => QUESTS.find((q) => q.id === id)).filter(Boolean).map((q) => {
       const progress = Math.min(q.goal, questProgress(u, q));
-      return { id: q.id, names: { pl: q.pl, en: q.en }, goal: q.goal, progress, xp: questXp(q), done: progress >= q.goal, claimed: d.claimed.includes(q.id) };
+      return { id: q.id, names: { pl: q.pl, en: q.en }, goal: q.goal, progress, xp: questXp(q), coins: coins.forQuest(questXp(q)), done: progress >= q.goal, claimed: d.claimed.includes(q.id) };
     }),
     streak: st.n, streakToday: st.today, best: st.best,
     rewards: streakTiers().map((x) => ({ ...x, got: (u.unlocked || []).includes(x.cosmetic) })),
@@ -567,6 +573,7 @@ function claimQuest(u, id) {
   d.claimed.push(id);
   u.questsDone = (u.questsDone || 0) + 1;
   u.bonusXp = (u.bonusXp || 0) + questXp(q);
+  const gotCoins = coins.earn(u, coins.forQuest(questXp(q)));
   let cosmetic = null;
   if (d.ids.every((x) => d.claimed.includes(x))) {
     // komplet na dziś: seria +1 i nagrody za progi serii
@@ -584,7 +591,7 @@ function claimQuest(u, id) {
   updateBadges(u.uuid);
   pushMe(u.uuid);
   if (cosmetic) sendTo(u.uuid, { t: 'unlocked', cosmetic, unlocked: u.unlocked, streak: u.streak.n });
-  return { ok: true, xp: questXp(q), cosmetic, streak: u.streak?.n || 0 };
+  return { ok: true, xp: questXp(q), coins: gotCoins, cosmetic, streak: u.streak?.n || 0 };
 }
 // co minutę dopisujemy czas gry (gra z modem Gruz zgłasza menu / świat / serwer)
 setInterval(() => {
@@ -596,6 +603,7 @@ setInterval(() => {
     const p = dailyOf(u).prog;
     p.playMs += 60_000;
     if (states.includes('multiplayer')) p.mpMs += 60_000;
+    if (coins.playMinute(u)) pushMe(uuid); // monety za czas w grze
     questsChanged(u);
   }
 }, 60_000);
@@ -862,6 +870,19 @@ const handlers = {
       updateBadges(c.uuid);
       return pushMe(c.uuid);
     }
+    if (coins.isPlusCode(entry.cosmetic)) {
+      // Gruz+ na 30 / 90 / 365 dni (kolejne kody dopisują dni)
+      if (entry.used.includes(c.uuid)) return c.send({ t: 'error', code: 'CODE_USED' });
+      if (entry.maxUses && entry.used.length >= entry.maxUses) return c.send({ t: 'error', code: 'CODE_EXHAUSTED' });
+      const r = coins.redeemPlus(u, entry.cosmetic);
+      if (r.error) return c.send({ t: 'error', code: r.error });
+      entry.used.push(c.uuid);
+      save();
+      progress.passCheck(u); // Gruz+ ma Gruz Pass Premium – nagrody za zdobyte już poziomy wpadają od razu
+      c.send({ t: 'plus', days: r.days, plus: r.plus });
+      updateBadges(c.uuid);
+      return pushMe(c.uuid);
+    }
     if (entry.used.includes(c.uuid) || u.unlocked.includes(entry.cosmetic)) return c.send({ t: 'error', code: 'CODE_USED' });
     if (entry.maxUses && entry.used.length >= entry.maxUses) return c.send({ t: 'error', code: 'CODE_EXHAUSTED' });
     entry.used.push(c.uuid);
@@ -1095,8 +1116,22 @@ const handlers = {
   'daily.claim'(c) {
     const u = user(c.uuid);
     const r = progress.dailyClaim(u);
+    if (r.ok) r.coins = coins.earn(u, coins.forDaily(r.day));
     c.send({ t: 'daily.claimed', ...r });
     if (r.ok) { updateBadges(c.uuid); pushMe(c.uuid); }
+  },
+
+  /** Sklep rotacyjny: kupno kosmetyki za monety (launcher 0.6.11+) */
+  'coins.buy'(c, m) {
+    const u = user(c.uuid);
+    const r = coins.buy(u, String(m.cosmetic || ''));
+    c.send({ t: 'coins.bought', ...r });
+    if (!r.ok) return;
+    u.wishlist = (u.wishlist || []).filter((k) => k !== r.cosmetic);
+    save();
+    sendTo(c.uuid, { t: 'unlocked', cosmetic: r.cosmetic, unlocked: coins.effective(u), coins: true });
+    updateBadges(c.uuid);
+    pushMe(c.uuid);
   },
 
   'quests.get'(c) { c.send({ t: 'quests', ...questsView(user(c.uuid)) }); },
@@ -1130,7 +1165,7 @@ const handlers = {
     c.send({
       t: 'profile',
       profile: { uuid: u.uuid, name: u.name, cosmetics: u.cosmetics, stats: u.stats, firstSeen: u.firstSeen, lastSeen: u.lastSeen,
-        friends: u.friends.length, level: levelOf(u), badges: u.badges || [], wishlist: (u.wishlist || []).filter((k) => !u.unlocked.includes(k)), ...presenceOf(u.uuid) },
+        friends: u.friends.length, level: levelOf(u), badges: u.badges || [], plus: coins.plusActive(u), wishlist: (u.wishlist || []).filter((k) => !u.unlocked.includes(k)), ...presenceOf(u.uuid) },
     });
   },
 };
@@ -1241,7 +1276,7 @@ ${ok ? `<img src="https://mc-heads.net/avatar/${e(entry.leader)}/72" width="72" 
 
 /** To, czego potrzebuje panel admina */
 const adminCtx = {
-  password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, isCodeKey, VERSION,
+  password: ADMIN_PASSWORD, db, save, online, parties, levelOf, hoursOf, presenceOf, LOCKED, isCodeKey, VERSION, coins,
   kick(uuid) { for (const c of clientsOf(uuid)) { c.send({ t: 'error', code: 'BANNED' }); c.ws.close(4003, 'banned'); } },
   MODULE_IDS, normHost, pushServerRules,
   updateBadges, pushMe, catalog, tiers, grantInviteRewards, dayKey, weekKey, weeklyXp, weeklyTop, QUESTS, streakTiers, DEFAULT_STREAK,
@@ -1289,6 +1324,7 @@ wss.on('connection', (ws, req) => {
         c.uuid = who.uuid;
         c.name = who.name;
         ensureUser(who.uuid, who.name);
+        user(who.uuid).cosmetics = cleanCosmetics(user(who.uuid), user(who.uuid).cosmetics); // koniec Gruz+ albo nowa rotacja
         if (c.kind === 'launcher' && c.version) user(who.uuid).launcher = c.version;
         markActive(who.uuid, c.kind === 'launcher' ? c.version : '');
         updateBadges(who.uuid);
@@ -1349,7 +1385,7 @@ setInterval(() => {
   db.purchases ||= [];
   shopApi = require('./shop').setup({ db, save, user, byName, sendTo, pushMe, catalog, publicUrl, LOCKED });
   publicApi = require('./public').setup({ db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl,
-    streakTiers, tiers, progress });
+    streakTiers, tiers, progress, coins, creatorKey, byInvite });
   adminCtx.shop = shopApi;
   shotsApi = require('./shots').setup({ db, save, user, storage, publicUrl });
   adminCtx.shots = shotsApi;

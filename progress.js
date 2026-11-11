@@ -18,6 +18,8 @@ const PASS_CODE = 'pass:premium';
 
 function setup(ctx) {
   const { db, save, xpOf, levelOf, hoursOf, dayKey, dayBefore, catalog, sendTo } = ctx;
+  /** Gruz Pass Premium: kod na ten miesiąc albo aktywny Gruz+ (coins.js) */
+  const premium = (u) => !!passOf(u).premium || !!ctx.plusActive?.(u);
 
   // ---------------- osiągnięcia ----------------
   // prog(u) -> [ile jest, ile trzeba]; xp – jednorazowa nagroda
@@ -63,7 +65,7 @@ function setup(ctx) {
   /** Pełna lista dla launchera: stare odznaki (bez paska) + osiągnięcia z postępem */
   function achievementsView(u, BADGES) {
     const have = new Set(u.badges || []);
-    const old = BADGES.filter((b) => !ACH.some((a) => a.id === b.id) && b.id !== 'staff')
+    const old = BADGES.filter((b) => !ACH.some((a) => a.id === b.id) && b.id !== 'staff' && b.id !== 'plus')
       .map((b) => ({ id: b.id, names: { pl: b.pl, en: b.en }, done: have.has(b.id), progress: null, goal: null, xp: 0 }));
     const fresh = ACH.map((a) => {
       const [c, g] = a.prog(u);
@@ -108,7 +110,7 @@ function setup(ctx) {
     const give = (key) => { if (key && catalog.exists(key) && !u.unlocked.includes(key)) { u.unlocked.push(key); fresh.push(key); } };
     for (let t = 1; t <= tier; t++) {
       give(r.free[t]);
-      if (p.premium) give(r.premium[t]);
+      if (premium(u)) give(r.premium[t]);
     }
     if (fresh.length) {
       save();
@@ -132,7 +134,7 @@ function setup(ctx) {
     const list = rewardList();
     return {
       month: p.m, endsAt: monthEnd(), tiers: PASS_TIERS, perTier: PASS_XP, tier, xp,
-      inTier: tier >= PASS_TIERS ? PASS_XP : xp - tier * PASS_XP, premium: !!p.premium, rewards: list,
+      inTier: tier >= PASS_TIERS ? PASS_XP : xp - tier * PASS_XP, premium: premium(u), plus: !!ctx.plusActive?.(u), rewards: list,
     };
   }
 
@@ -169,7 +171,7 @@ function setup(ctx) {
     return { ok: true, xp, day: v.day };
   }
 
-  return { ACH, asBadges, rewardList, passRebase, dailyView, dailyClaim, rewardXp, xpFor, achievementsView, passView, passCheck, passTier, activatePremium, PASS_CODE, monthKey };
+  return { ACH, asBadges, premium, rewardList, passRebase, dailyView, dailyClaim, rewardXp, xpFor, achievementsView, passView, passCheck, passTier, activatePremium, PASS_CODE, monthKey };
 }
 
 module.exports = { setup, PASS_CODE, PASS_TIERS, PASS_XP, DEFAULT_PASS };

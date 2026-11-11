@@ -4,7 +4,7 @@
 const SKIN_TTL = 60 * 60_000;
 
 function setup(ctx) {
-  const { db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl, streakTiers, tiers, progress } = ctx;
+  const { db, user, byName, levelOf, hoursOf, presenceOf, weeklyTop, weeklyRank, weeklyXp, BADGES, catalog, publicUrl, streakTiers, tiers, progress, coins } = ctx;
   const visible = (u) => u && !u.banned && !u.privateProfile;
 
   // ---------------- limit zapytań z jednego IP ----------------
@@ -55,7 +55,7 @@ function setup(ctx) {
       const [slot, v] = part.split('=');
       if (!slot || !v || v === 'none') continue;
       const key = `${slot}:${v}`;
-      if (!catalog.exists(key) || !catalog.allowed(key, u.unlocked || [])) continue; // tylko to, co gracz naprawdę ma
+      if (!catalog.exists(key) || !catalog.allowed(key, coins ? coins.effective(u) : u.unlocked || [])) continue; // tylko to, co gracz może nosić
       out[slot] = { id: v, name: catalog.customName(key, 'en') ? { en: catalog.customName(key, 'en'), pl: catalog.customName(key, 'pl') } : null };
     }
     const cape = out.cape?.id;
@@ -76,8 +76,9 @@ function setup(ctx) {
       weekly: { xp: weeklyXp(u), rank: weeklyXp(u) > 0 ? 1 + Object.values(db.users).filter((x) => visible(x) && weeklyXp(x) > weeklyXp(u)).length : null }, // jak w /api/top (bez ukrytych)
       cosmetics: cosmeticsOf(u),
       wishlist: (u.wishlist || []).filter((k) => !(u.unlocked || []).includes(k)),
-      achievements: { done: (u.badges || []).length, total: BADGES.filter((b) => b.id !== 'staff').length },
-      pass: progress ? { tier: progress.passTier(u), tiers: 30, premium: !!(u.pass && u.pass.premium && u.pass.m === progress.monthKey()) } : null,
+      achievements: { done: (u.badges || []).filter((id) => id !== 'plus').length, total: BADGES.filter((b) => b.id !== 'staff' && b.id !== 'plus').length },
+      plus: !!coins?.plusActive(u),
+      pass: progress ? { tier: progress.passTier(u), tiers: 30, premium: progress.premium(u) } : null,
       skin: { url: s.png ? publicUrl(`/api/skin/${u.uuid}.png`) : null, slim: s.slim },
     };
   }
@@ -86,6 +87,39 @@ function setup(ctx) {
     if (period === 'week') return weeklyTop(500).filter((x) => visible(user(x.uuid))).slice(0, n).map((x, i) => ({ rank: i + 1, name: x.name, uuid: x.uuid, level: x.level, value: x.xp }));
     return Object.values(db.users).filter(visible).map((u) => ({ name: u.name, uuid: u.uuid, level: levelOf(u).level, value: Math.round(hoursOf(u) * 10) / 10 }))
       .filter((x) => x.value > 0).sort((a, b) => b.value - a.value).slice(0, n).map((x, i) => ({ rank: i + 1, ...x }));
+  }
+
+  // ---------------- obrazki do podglądu linków (Discord, X…): 1200x630, pamięć 10 minut ----------------
+  const cards = new Map(); // "profile:nick" -> { at, png }
+  async function cardImage(kind, id) {
+    const key = kind + ':' + id.toLowerCase();
+    const hit = cards.get(key);
+    if (hit && Date.now() - hit.at < 10 * 60_000) return hit.png;
+    let o = null;
+    if (kind === 'profile') {
+      const u = byName(id);
+      if (!visible(u)) return null;
+      const s = await skinOf(u.uuid);
+      const cape = /(?:^|;)cape=([a-z0-9_]+)/.exec(u.cosmetics || '')?.[1];
+      o = { title: u.name, kicker: coins?.plusActive(u) ? 'GRUZ+ PLAYER' : 'GRUZ CLIENT PLAYER', skin: s.png, slim: s.slim,
+        cape: cape && cape !== 'none' && catalog.allowed('cape:' + cape, coins ? coins.effective(u) : u.unlocked || []) ? cape : null,
+        chips: [`Level ${levelOf(u).level}`, `${Math.round(hoursOf(u))} h played`, `${(u.badges || []).length} badges`], foot: `gruzclient.com/u/${u.name}` };
+    } else {
+      const code = ctx.creatorKey(id);
+      const cr = db.creators?.[code];
+      const inv = !cr ? ctx.byInvite(code) : null;
+      if (!cr && !visible(inv)) return null;
+      const s = inv ? await skinOf(inv.uuid) : { png: null, slim: false };
+      const reward = cr ? cr.cosmetic || db.promo?.creatorReward || 'cape:nebula' : db.promo?.inviteWelcome || null;
+      o = { title: cr ? cr.name : inv.name, kicker: 'PLAY GRUZ CLIENT WITH', skin: s.png, slim: s.slim,
+        cape: reward && reward.startsWith('cape:') ? reward.slice(5) : 'gruz', codeBox: code,
+        chips: reward ? ['Free cosmetic with this code'] : ['Free Minecraft launcher & client'], foot: `gruzclient.com/c/${code}` };
+    }
+    let png = null;
+    try { png = await require('./bot/images').shareCard(o); } catch (e) { console.error('[card]', e.message); }
+    cards.set(key, { at: Date.now(), png });
+    if (cards.size > 300) cards.delete(cards.keys().next().value);
+    return png;
   }
 
   async function http(req, res, url) {
@@ -122,6 +156,30 @@ function setup(ctx) {
       for (const c of Object.values(catalog.custom)) if (c.unlock === 'level') add(`cape:${c.id}`, { type: 'level', level: c.level });
       const custom = Object.values(catalog.custom).map((c) => ({ id: c.id, name: { pl: c.pl, en: c.en || c.pl }, url: publicUrl(`/capes/${c.id}.png?v=${c.ver || 1}`) }));
       send(res, 200, { catalog: catalog.CATALOG, how, custom, season: catalog.activeSeason(), duoEmotes: ['highfive', 'hug', 'duodance'] }, 300);
+      return true;
+    }
+    if (url.pathname === '/api/creator') {
+      // strona gruzclient.com/c/<KOD>: kod twórcy (panel → Twórcy) albo kod zaproszenia gracza
+      const code = ctx.creatorKey(url.searchParams.get('code'));
+      const cr = code && db.creators?.[code];
+      const inv = !cr && code ? ctx.byInvite(code) : null;
+      if (!cr && !visible(inv)) { send(res, 404, { error: 'NO_CODE' }); return true; }
+      const reward = cr ? cr.cosmetic || db.promo?.creatorReward || 'cape:nebula' : db.promo?.inviteWelcome || null;
+      const key = reward && catalog.exists(reward) ? reward : null;
+      send(res, 200, {
+        code, kind: cr ? 'creator' : 'friend', name: cr ? cr.name : inv.name, uuid: cr ? null : inv.uuid,
+        uses: cr ? (cr.uses || []).length : (inv.invited || []).length,
+        reward: key, rewardName: key && catalog.customName(key, 'en') ? { en: catalog.customName(key, 'en'), pl: catalog.customName(key, 'pl') } : null,
+        card: publicUrl(`/api/card/creator/${code}.png`),
+      }, 120);
+      return true;
+    }
+    const card = /^\/api\/card\/(profile|creator)\/([A-Za-z0-9_-]{2,24})\.png$/.exec(url.pathname);
+    if (card) {
+      const png = await cardImage(card[1], card[2]);
+      if (!png) { res.writeHead(404, { 'access-control-allow-origin': '*' }); res.end(); return true; }
+      res.writeHead(200, { 'content-type': 'image/png', 'access-control-allow-origin': '*', 'cache-control': 'public, max-age=600' });
+      res.end(png);
       return true;
     }
     const m = /^\/api\/skin\/([0-9a-f-]{32,36})\.png$/.exec(url.pathname);

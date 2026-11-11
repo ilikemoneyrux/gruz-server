@@ -570,4 +570,53 @@ async function partnerBanners(o) {
   return out;
 }
 
-module.exports = { captcha, newCode, skinCard, mojangProfile, fetchBuf, HD_CAPES, partnerBanners };
+/**
+ * Obrazek do podglądu linku (Discord, X): profil gracza albo strona twórcy. 1200x630.
+ * @param o { title, kicker, chips: [..], foot, skin(Buffer|null), slim, cape, codeBox }
+ */
+async function shareCard(o) {
+  const W = 1200, H = 630;
+  const cv = createCanvas(W, H);
+  const ctx = cv.getContext('2d');
+  bannerBg(ctx, W, H);
+  await logoAt(ctx, 70, 62, 64);
+  ctx.textBaseline = 'alphabetic';
+  ctx.textAlign = 'left';
+  ctx.font = '26px PoppinsBold';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText('GRUZ CLIENT', 150, 104);
+  ctx.font = '24px PoppinsSemi';
+  ctx.fillStyle = '#dcaaff';
+  ctx.fillText(String(o.kicker || '').toUpperCase(), 72, 238);
+  const size = fitFont(ctx, o.title, 640, 108, 'PoppinsBold');
+  neonText(ctx, o.title, 70, 238 + size * 0.95, size);
+  let y = 238 + size * 0.95 + 44;
+  if (o.codeBox) {
+    ctx.font = '22px PoppinsSemi';
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText('CODE', 72, y + 10);
+    ctx.font = '44px PoppinsBold';
+    const cw = ctx.measureText(o.codeBox).width + 56;
+    ctx.fillStyle = 'rgba(180,92,255,0.16)';
+    roundRect(ctx, 150, y - 34, cw, 66, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(220,170,255,0.7)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(o.codeBox, 178, y + 16);
+    y += 84;
+  }
+  chips(ctx, o.chips || [], 70, y, 52, 14);
+  ctx.font = '24px PoppinsSemi';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.fillText(o.foot || 'gruzclient.com', 72, H - 58);
+  // postać po prawej: tył z peleryną, gdy jest peleryna; inaczej przód
+  const skin = o.skin ? await loadImage(o.skin).catch(() => null) : null;
+  const s = 13;
+  if (o.cape) await heroFigure(ctx, skin, o.slim, 940, 120, s, o.cape);
+  else if (skin) { ctx.imageSmoothingEnabled = false; drawBody(ctx, skin, 940 - 8 * s, 120, s, false, o.slim); ctx.imageSmoothingEnabled = true; }
+  return cv.toBuffer('image/png');
+}
+
+module.exports = { captcha, newCode, skinCard, shareCard, mojangProfile, fetchBuf, HD_CAPES, partnerBanners };

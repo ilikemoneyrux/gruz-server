@@ -126,6 +126,13 @@ async function route(req, res, url, ctx) {
       if ('privateProfile' in body) u.privateProfile = !!body.privateProfile; // ukryty profil na stronie i w rankingu
       if (typeof body.unlock === 'string' && ctx.LOCKED.includes(body.unlock) && !u.unlocked.includes(body.unlock)) u.unlocked.push(body.unlock);
       if (typeof body.lock === 'string') u.unlocked = u.unlocked.filter((x) => x !== body.lock);
+      // monety (+/−) i dni Gruz+ nadawane ręcznie: { coins: 500 }, { plusDays: 30 }, { plusDays: 0 } = koniec Gruz+
+      if (Number.isFinite(Number(body.coins)) && Number(body.coins)) u.coins = Math.max(0, Math.round((u.coins || 0) + Number(body.coins)));
+      if ('plusDays' in body) {
+        const d = Math.max(0, Math.min(3650, Number(body.plusDays) || 0));
+        if (d) u.plus = { until: Math.max(Date.now(), u.plus?.until || 0) + d * 864e5, since: u.plus?.since || Date.now() };
+        else delete u.plus;
+      }
       ctx.save();
       ctx.updateBadges(u.uuid);
       if (ctx.pushMe) ctx.pushMe(u.uuid);
@@ -134,7 +141,7 @@ async function route(req, res, url, ctx) {
 
     if (p === '/admin/api/codes' && req.method === 'GET') {
       return json(res, 200, {
-        locked: [...ctx.LOCKED, 'pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance'],
+        locked: [...ctx.LOCKED, 'pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance', 'plus:30', 'plus:90', 'plus:365'],
         codes: Object.entries(db.codes).map(([code, c]) => ({ code, ...c, used: c.used.length })).sort((a, b) => b.created - a.created),
       });
     }

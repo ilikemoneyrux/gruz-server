@@ -195,6 +195,7 @@ module.exports = function startDiscord(ctx) {
     const lang = cfg().lang === 'pl' ? 'pl' : 'en';
     if (key === 'all') return lang === 'pl' ? 'Wszystkie kosmetyki' : 'All cosmetics';
     if (key === 'pass:premium') return lang === 'pl' ? 'Gruz Pass Premium (bieżący miesiąc)' : 'Gruz Pass Premium (current month)';
+    if (/^plus:\d+$/.test(key)) return lang === 'pl' ? `Gruz+ (${key.slice(5)} dni)` : `Gruz+ (${key.slice(5)} days)`;
     if (key.startsWith('emote:')) { const n = { highfive: ['Przybij piątkę', 'High five'], hug: ['Przytulas', 'Hug'], duodance: ['Taniec w parze', 'Duo dance'] }[key.slice(6)] || [key, key]; return (lang === 'pl' ? 'Emotka we dwoje: ' : 'Duo emote: ') + n[lang === 'pl' ? 0 : 1]; }
     const [slot, v] = key.split(':');
     const own = ctx.catalog?.customName?.(key, lang); // własna peleryna z panelu – nazwa z panelu
@@ -1605,7 +1606,7 @@ module.exports = function startDiscord(ctx) {
         const f = i.options.getFocused(true);
         const q = String(f.value || '').toLowerCase();
         if (f.name === 'cosmetic') {
-          const items = [...ctx.LOCKED, ...(ctx.isCodeKey ? ['pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance'] : [])].map((k) => ({ name: cosmeticLabel(k), value: k }))
+          const items = [...ctx.LOCKED, ...(ctx.isCodeKey ? ['pass:premium', 'emote:highfive', 'emote:hug', 'emote:duodance', 'plus:30', 'plus:90', 'plus:365'] : [])].map((k) => ({ name: cosmeticLabel(k), value: k }))
             .filter((x) => !q || x.name.toLowerCase().includes(q) || x.value.includes(q));
           return i.respond(items.slice(0, 25));
         }
