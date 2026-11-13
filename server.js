@@ -154,7 +154,7 @@ function checkLevel(u) {
 function meView(u) {
   return { level: levelOf(u), badges: u.badges || [], unlocked: coins.effective(u), owned: u.unlocked || [], season: catalog.activeSeason(),
     coins: u.coins || 0, shop: coins.shopView(u), plus: coins.plusView(u),
-    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u),
+    discord: u.discord ? { tag: u.discord.tag } : null, referredBy: referrerName(u), invite: inviteView(u), privateProfile: !!u.privateProfile,
     weekly: { xp: weeklyXp(u), rank: weeklyRank(u.uuid), week: weekKey() },
     achievements: progress.achievementsView(u, BADGES), pass: progress.passView(u), wishlist: u.wishlist || [],
     daily: { ...progress.dailyView(u), coins: coinsMod.DAILY_COINS } };
@@ -1110,6 +1110,14 @@ const handlers = {
     save();
     pushMe(c.uuid);
     for (const f of u.friends) pushFriends(f);
+  },
+
+  /** Prywatny profil: gracz sam ukrywa się na stronie (/api/profile, /api/top) – ta sama flaga co w /admin */
+  'privacy.set'(c, m) {
+    const u = user(c.uuid);
+    u.privateProfile = !!m.private;
+    save();
+    pushMe(c.uuid);
   },
 
   /** Codzienna nagroda za logowanie (przycisk na stronie Graj w launcherze) */
