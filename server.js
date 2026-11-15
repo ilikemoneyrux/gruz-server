@@ -10,7 +10,7 @@ const { WebSocketServer } = require('ws');
 const PORT = Number(process.env.PORT) || 8787;
 const DATA = process.env.GRUZ_DATA || path.join(__dirname, 'data');
 const MOJANG = process.env.GRUZ_SESSION_URL || 'https://sessionserver.mojang.com/session/minecraft/hasJoined';
-const VERSION = '1.11.3';
+const VERSION = '1.11.4';
 const PUBLIC_URL = (process.env.GRUZ_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || 'https://gruz-server.onrender.com').replace(/\/$/, '');
 const TZ = process.env.GRUZ_TZ || 'Europe/Warsaw';
 const STATS_SLACK = Number(process.env.GRUZ_STATS_SLACK) || 10 * 60_000; // zapas przy limicie przyrostu statystyk (testy ustawiają duży)
@@ -1401,10 +1401,6 @@ setInterval(() => {
   levelListeners.push((u, lv) => { if (capesApi.grantLevel(u, lv)) pushMe(u.uuid); });
   weeklyTick();
   server.listen(PORT, () => console.log(`Gruz server ${VERSION} na porcie ${PORT}, dane: ${where}, graczy: ${Object.keys(db.users).length}`));
-  // darmowy Render usypia serwis po 15 min bez ruchu z zewnątrz (a z nim bota i weryfikację) – ping przez publiczny adres co 10 min to ruch z zewnątrz
-  if (process.env.RENDER_EXTERNAL_URL) {
-    setInterval(() => fetch(publicUrl('/health'), { signal: AbortSignal.timeout(20_000) }).catch((e) => console.warn('[keepalive]', e.message)), 10 * 60_000);
-  }
   // bot Discord (gdy ustawiono DISCORD_TOKEN)
   require('./discord')({
     db, save, online, presenceOf, levelOf, LOCKED, isCodeKey, serverKey, serverSessions, pushMe, consumeLinkCode, creatorKey, catalog,

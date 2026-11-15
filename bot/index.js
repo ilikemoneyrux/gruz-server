@@ -1,7 +1,7 @@
 // Bot Discord Gruz Client. Włącza się, gdy ustawisz zmienną DISCORD_TOKEN (szczegóły w README).
 //
 // /gruz       – dla wszystkich: player, online, top, skin, server, servers
-// /gruzadmin  – dla adminów:     giveaway, code, tickets, verify, config, wipe
+// /gruzadmin  – dla adminów:     giveaway, code, tickets, config, wipe (weryfikacja: osobny bot gruz-verify)
 // /shop-codes – dla adminów:     paczka jednorazowych kodów na kosmetykę + plik CSV (do sprzedaży kodów)
 //
 // Ustawienia bota (język, kanały, kategorie ticketów, giveawaye…) trzymamy w db.discord,
@@ -87,11 +87,6 @@ const adminCmd = new SlashCommandBuilder()
     .addSubcommand((s) => s.setName('staff-role').setDescription('Role that sees and handles tickets')
       .addRoleOption((o) => o.setName('role').setDescription('Staff role').setRequired(true)))
     .addSubcommand((s) => s.setName('list').setDescription('Show ticket settings')))
-  .addSubcommandGroup((g) => g.setName('verify').setDescription('Captcha verification')
-    .addSubcommand((s) => s.setName('panel').setDescription('Post the verification panel')
-      .addRoleOption((o) => o.setName('role').setDescription('Role given after verification').setRequired(true))
-      .addChannelOption((o) => o.setName('channel').setDescription('Where (default: here)').addChannelTypes(ChannelType.GuildText))
-      .addIntegerOption((o) => o.setName('min_account_age_days').setDescription('Block Discord accounts younger than this (default 0)').setMinValue(0).setMaxValue(365))))
   .addSubcommandGroup((g) => g.setName('config').setDescription('Bot settings')
     .addSubcommand((s) => s.setName('language').setDescription('Bot language')
       .addStringOption((o) => o.setName('language').setDescription('Language').setRequired(true)
@@ -184,7 +179,6 @@ module.exports = function startDiscord(ctx) {
     t.open ||= {};
     t.panels ||= [];
     t.counter ||= 0;
-    d.verify ||= {};
     return d;
   }
   const t = i18n.make(() => cfg().lang);
@@ -811,71 +805,6 @@ module.exports = function startDiscord(ctx) {
     }
   }
 
-  // ---------------- weryfikacja (captcha) ----------------
-  const vfPending = new Map(); // userId -> { code, at, tries }
-  const vfAttempts = new Map(); // userId -> [czasy]
-
-  async function cmdVerifyPanel(i) {
-    const role = i.options.getRole('role', true);
-    const me = i.guild.members.me;
-    if (!me.permissions.has(P.ManageRoles)) return reply(i, t('noPerm', { perm: 'Manage Roles' }));
-    if (role.position >= me.roles.highest.position || role.managed) return reply(i, t('vfRoleHigh', { r: `${role}` }));
-    const v = cfg().verify;
-    v.roleId = role.id;
-    v.minAge = i.options.getInteger('min_account_age_days') || 0;
-    save();
-    const ch = i.options.getChannel('channel') || i.channel;
-    const e = new EmbedBuilder().setColor(COLOR).setTitle(t('vfTitle')).setDescription(t('vfText')).setThumbnail('attachment://logo.png');
-    const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vf:start').setLabel(t('vfButton')).setEmoji('✅').setStyle(ButtonStyle.Success));
-    await ch.send({ embeds: [e], components: [row], files: [logoFile()] });
-    return reply(i, t('vfPanelSent', { ch: `${ch}`, r: `${role}` }));
-  }
-
-  async function btnVerify(i, act) {
-    const v = cfg().verify;
-    if (!v.roleId) return reply(i, t('err'));
-    if (i.member.roles.cache.has(v.roleId)) return reply(i, t('vfAlready'));
-    if (act === 'start') {
-      if (v.minAge && Date.now() - i.user.createdTimestamp < v.minAge * 864e5) return reply(i, t('vfTooNew', { d: v.minAge }));
-      const times = (vfAttempts.get(i.user.id) || []).filter((x) => Date.now() - x < 10 * 6e4);
-      if (times.length >= 5) return reply(i, t('vfSlow'));
-      times.push(Date.now());
-      vfAttempts.set(i.user.id, times);
-      const code = images.newCode(6);
-      vfPending.set(i.user.id, { code, at: Date.now(), tries: 0 });
-      const png = await images.captcha(code);
-      const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vf:enter').setLabel(t('vfEnter')).setEmoji('⌨️').setStyle(ButtonStyle.Primary));
-      return i.reply({ content: t('vfCaptcha'), files: [new AttachmentBuilder(png, { name: 'verify.png' })], components: [row], ephemeral: true });
-    }
-    if (act === 'enter') {
-      const p = vfPending.get(i.user.id);
-      if (!p || Date.now() - p.at > 5 * 6e4 || p.tries >= 3) return reply(i, t('vfExpired'));
-      return i.showModal(new ModalBuilder().setCustomId('vf:modal').setTitle(t('vfModalTitle'))
-        .addComponents(new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId('code').setLabel(t('vfModalLabel')).setStyle(TextInputStyle.Short).setMinLength(4).setMaxLength(10).setRequired(true))));
-    }
-  }
-
-  async function submitVerify(i) {
-    const v = cfg().verify;
-    const p = vfPending.get(i.user.id);
-    if (!p || Date.now() - p.at > 5 * 6e4 || p.tries >= 3) { vfPending.delete(i.user.id); return reply(i, t('vfExpired')); }
-    const given = i.fields.getTextInputValue('code').trim().toUpperCase().replace(/\s/g, '').replace(/0/g, 'O').replace(/1/g, 'I');
-    const want = p.code.replace(/0/g, 'O').replace(/1/g, 'I');
-    if (given !== want) {
-      p.tries++;
-      if (p.tries >= 3) { vfPending.delete(i.user.id); return reply(i, t('vfExpired')); }
-      return reply(i, t('vfWrong', { n: 3 - p.tries }));
-    }
-    vfPending.delete(i.user.id);
-    try {
-      await i.member.roles.add(v.roleId, 'Gruz captcha');
-    } catch {
-      return reply(i, t('vfRoleHigh', { r: `<@&${v.roleId}>` }));
-    }
-    logTo({ content: t('vfLog', { user: `${i.user} (${i.user.tag})` }), allowedMentions: { parse: [] } });
-    return reply(i, t('vfOk'));
-  }
-
   // ---------------- wipe ----------------
   const wipePending = new Map();
   function keptChannels(guild) {
@@ -1477,8 +1406,7 @@ module.exports = function startDiscord(ctx) {
       return {
         online: !!client.user, tag: client.user?.tag || null, guild: g ? { id: g.id, name: g.name, members: g.memberCount } : null,
         channels, roles, cosmetics: ctx.LOCKED,
-        config: { lang: c.lang, channels: c.channels, memberRole: c.memberRole || '', partnerRoles: c.partnerRoles || [], staffRole: c.tickets.staffRole || '',
-          verifyRole: c.verify.roleId || '', verifyMinAge: c.verify.minAge || 0, ticketCategories: c.tickets.categories,
+        config: { lang: c.lang, channels: c.channels, memberRole: c.memberRole || '', partnerRoles: c.partnerRoles || [], staffRole: c.tickets.staffRole || '', ticketCategories: c.tickets.categories,
           levelRoles: levelRoles(), levelStack: !!c.levelStack },
         events: Object.values(c.events || {}).sort((a, b) => a.at - b.at).map((e) => ({ id: e.id, title: e.title, at: e.at, server: e.server, going: e.going.length, channel: chName(e.channelId) })),
         giveaways: Object.entries(c.giveaways).filter(([, g2]) => !g2.ended).map(([id, g2]) => ({ id, cosmetic: g2.cosmetic, endsAt: g2.endsAt, entrants: g2.entrants.length, channel: chName(g2.channelId) })),
@@ -1554,20 +1482,6 @@ module.exports = function startDiscord(ctx) {
         const msg = await ch.send({ ...ticketPanel(b.title || '', b.text || ''), files: [logoFile()] });
         tk.panels.push({ c: ch.id, m: msg.id, title: b.title || '', text: b.text || '' });
         save();
-        return { ok: true, url: msg.url };
-      }
-      if (b.kind === 'verify') {
-        const g = ch.guild;
-        const role = b.roleId && await g.roles.fetch(b.roleId).catch(() => null);
-        if (!role) throw new Error('Wybierz rolę dla zweryfikowanych.');
-        if (role.position >= g.members.me.roles.highest.position) throw new Error(`Rola bota musi być wyżej niż ${role.name}.`);
-        const v = cfg().verify;
-        v.roleId = role.id;
-        v.minAge = Math.max(0, Math.min(365, Number(b.minAge) || 0));
-        save();
-        const e = new EmbedBuilder().setColor(COLOR).setTitle(t('vfTitle')).setDescription(t('vfText')).setThumbnail('attachment://logo.png');
-        const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('vf:start').setLabel(t('vfButton')).setEmoji('✅').setStyle(ButtonStyle.Success));
-        const msg = await ch.send({ embeds: [e], components: [row], files: [logoFile()] });
         return { ok: true, url: msg.url };
       }
       throw new Error('Nieznany panel.');
@@ -1664,7 +1578,6 @@ module.exports = function startDiscord(ctx) {
             if (sub === 'reroll') return cmdGiveawayReroll(i);
           }
           if (group === 'tickets') return cmdTickets(i, sub);
-          if (group === 'verify') return cmdVerifyPanel(i);
           if (group === 'config') return cmdConfig(i, sub);
           if (group === 'event') return cmdEvent(i, sub);
           if (group === 'invites') return cmdInvitesAdmin(i, sub);
@@ -1687,7 +1600,6 @@ module.exports = function startDiscord(ctx) {
         const [kind, a, b] = i.customId.split(':');
         if (kind === 'gw') return btnGiveaway(i, a);
         if (kind === 'tk') return btnTicket(i, a);
-        if (kind === 'vf') return btnVerify(i, a);
         if (kind === 'ev') return btnEvent(i);
         if (kind === 'wipe') { if (!isAdmin(i)) return reply(i, t('adminOnly')); return btnWipe(i, a, b); }
         return;
@@ -1695,7 +1607,6 @@ module.exports = function startDiscord(ctx) {
       if (i.isStringSelectMenu() && i.customId === 'tk:open') return selectTicket(i);
       if (i.isModalSubmit()) {
         if (i.customId.startsWith('tk:modal:')) return submitTicket(i, i.customId.slice(9));
-        if (i.customId === 'vf:modal') return submitVerify(i);
       }
     } catch (e) {
       console.error('[discord]', e);
