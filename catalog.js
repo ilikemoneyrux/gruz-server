@@ -3,13 +3,13 @@
 // a kosmetyki sezonowe można odebrać za darmo w czasie wydarzenia.
 
 const CATALOG = {
-  cape: ['gruz', 'nebula', 'sakura', 'inferno', 'ocean', 'flow', 'crystals', 'galaxy', 'aurora', 'ember', 'pumpkin', 'winter'],
-  head: ['halo', 'crown', 'tophat', 'witch', 'santa'],
-  wings: ['angel', 'demon', 'crystal', 'bat'],
+  cape: ['gruz', 'nebula', 'sakura', 'inferno', 'ocean', 'flow', 'crystals', 'galaxy', 'aurora', 'ember', 'pumpkin', 'winter', 'void'],
+  head: ['halo', 'crown', 'tophat', 'witch', 'santa', 'viking', 'headphones'],
+  wings: ['angel', 'demon', 'crystal', 'bat', 'phoenix'],
   back: ['backpack', 'jetpack'],
   trail: ['shards', 'sparks', 'stars', 'witch', 'souls', 'snow'],
   pet: ['crystal', 'pumpkin'],
-  name: ['rainbow', 'neon', 'gold', 'fire', 'frost'],
+  name: ['rainbow', 'neon', 'gold', 'fire', 'frost', 'void'],
 };
 const FREE = ['cape:gruz'];
 

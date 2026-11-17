@@ -12,7 +12,7 @@ let logoP = null;
 const logo = () => (logoP ||= loadImage(A('logo.png')).catch(() => null));
 const capeCache = new Map();
 const HD_CAPES = ['gruz', 'nebula', 'sakura', 'inferno', 'ocean', 'pumpkin', 'winter'];
-const ANIM_CAPES = { flow: ['#4ad6ff', '#b45cff'], crystals: ['#b45cff', '#5cf0ff'], galaxy: ['#1a0b3d', '#8a5cff'], aurora: ['#3dffb4', '#5c7cff'], ember: ['#ff7a2e', '#5c1a00'] };
+const ANIM_CAPES = { flow: ['#4ad6ff', '#b45cff'], crystals: ['#b45cff', '#5cf0ff'], galaxy: ['#1a0b3d', '#8a5cff'], aurora: ['#3dffb4', '#5c7cff'], ember: ['#ff7a2e', '#5c1a00'], void: ['#2a0e4a', '#b45cff'] };
 
 const rnd = (a, b) => a + (b - a) * (crypto.randomInt(1_000_000) / 1_000_000);
 

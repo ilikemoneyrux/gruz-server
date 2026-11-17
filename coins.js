@@ -12,7 +12,7 @@
 const crypto = require('crypto');
 
 const DEFAULT_PRICES = { name: 300, trail: 400, head: 500, back: 600, pet: 700, cape: 900 };
-const ANIMATED_CAPES = ['cape:flow', 'cape:crystals', 'cape:galaxy', 'cape:aurora', 'cape:ember'];
+const ANIMATED_CAPES = ['cape:flow', 'cape:crystals', 'cape:galaxy', 'cape:aurora', 'cape:ember', 'cape:void'];
 const DAILY_COINS = [10, 10, 15, 15, 20, 20, 50]; // nagroda dnia: dzień 1–7
 const PLAY_EVERY = 10, PLAY_COINS = 2, PLAY_CAP = 60; // co 10 minut gry 2 monety, najwyżej 60 dziennie
 const LEVEL_COINS = 25;
