@@ -10,8 +10,8 @@ module.exports = {
   7794331: 'trail:shards', 7794334: 'trail:sparks', 7794335: 'trail:stars', 7794337: 'trail:witch',
   7794338: 'pet:crystal',
   7794340: 'name:rainbow', 7794343: 'name:neon', 7794346: 'name:gold', 7794347: 'name:fire', 7794348: 'name:frost',
-  // 7.11: Gruz Pass Premium (9.99 €) i płatne emotki we dwoje (1.49 €)
+  // 7.11: płatne emotki we dwoje (1.49 €); 7796600 = Gruz+ 30 dni (9.99 €, od 19.11 zamiast Gruz Pass Premium – Premium jest w Gruz+)
   // 17.11: hełm wikinga, słuchawki, skrzydła feniksa, peleryna i nick Pustka
   7818701: 'head:viking', 7818704: 'head:headphones', 7818705: 'wings:phoenix', 7818707: 'cape:void', 7818708: 'name:void',
-  7796600: 'pass:premium', 7796603: 'emote:highfive', 7796604: 'emote:hug', 7796610: 'emote:duodance',
+  7796600: 'plus:30', 7796603: 'emote:highfive', 7796604: 'emote:hug', 7796610: 'emote:duodance',
 };
